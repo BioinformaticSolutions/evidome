@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evidome Evidence Browser</title>
+<meta name="written-by" content="">
+<style>
+
+  :root {
+    --ink: #1c2330; --muted: #5d6778; --faint: #8b94a3;
+    --bg: #f6f7f9; --panel: #ffffff; --rule: #e1e5eb; --rule2: #eef1f4;
+    --accent: #0f5c63; --accent-2: #13737c; --accent-soft: #e5f0f0;
+    --high: #b4232a; --mod: #c26a00; --low: #5d6778; --pass: #2f7d32; --fail: #9a9a9a;
+    --mono: "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 13px/1.4 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 9px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--rule); }
+  .brand { font-weight: 700; letter-spacing: .01em; }
+  .brand small { display: block; font-weight: 500; font-size: 11px; color: var(--muted); letter-spacing: .02em; }
+  .search { flex: 1; display: flex; gap: 6px; max-width: 640px; }
+  .search input { flex: 1; padding: 7px 10px; border: 1px solid var(--rule); border-radius: 6px; background: #fbfcfd; }
+  .search input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .btn { padding: 7px 12px; border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-2); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .project { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .project b { color: var(--ink); }
+
+  .body { display: grid; grid-template-columns: 250px 1fr; min-height: 0; }
+  aside { background: var(--panel); border-right: 1px solid var(--rule); padding: 12px 14px; overflow: auto; }
+  aside h4 { margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  aside h4:first-child { margin-top: 2px; }
+  aside label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+  aside select, aside input[type=number] { width: 100%; padding: 5px 7px; border: 1px solid var(--rule); border-radius: 5px; background: #fff; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .row2 span { font-size: 11px; color: var(--muted); }
+  .hint { color: var(--faint); font-size: 11px; margin-top: 3px; }
+
+  main { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; min-height: 0; }
+  .tabs { display: flex; gap: 2px; padding: 8px 14px 0; border-bottom: 1px solid var(--rule); background: var(--bg); }
+  .tab { padding: 7px 12px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; color: var(--muted); background: none; }
+  .tab.on { background: var(--panel); border-color: var(--rule); color: var(--ink); font-weight: 600; margin-bottom: -1px; }
+  .status { margin-left: auto; align-self: center; color: var(--muted); font-size: 12px; padding-bottom: 6px; }
+
+  .view { overflow: auto; background: var(--panel); min-height: 0; }
+  table.grid { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12.5px; }
+  .grid th { position: sticky; top: 0; z-index: 1; background: #f3f5f7; text-align: left; font-weight: 600;
+    padding: 7px 9px; border-bottom: 1px solid var(--rule); white-space: nowrap; cursor: pointer; user-select: none; color: #3b4453; }
+  .grid th.sorted::after { content: " ▾"; color: var(--accent); }
+  .grid th.sorted.asc::after { content: " ▴"; }
+  .grid td { padding: 5px 9px; border-bottom: 1px solid var(--rule2); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .grid tbody tr { cursor: pointer; }
+  .grid tbody tr:hover td { background: #f7fafa; }
+  .grid tbody tr.sel td { background: var(--accent-soft); }
+  .grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); font-size: 11.5px; }
+  .pill { display: inline-block; padding: 1px 6px; border-radius: 9px; font-size: 11px; font-weight: 600; background: var(--rule2); color: var(--muted); }
+  .pill.HIGH { background: #fbe7e7; color: var(--high); } .pill.MODERATE { background: #fdf0de; color: var(--mod); }
+  .pill.pass { background: #e6f2e6; color: var(--pass); } .pill.partial { background: #eef4e2; color: #5d7d1d; }
+  .pill.fail { background: #f0f0f0; color: #777; } .pill.dmg { background: var(--accent-soft); color: var(--accent); }
+  .clin-P { color: var(--high); font-weight: 600; } .clin-V { color: var(--mod); }
+
+  footer { display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-top: 1px solid var(--rule); background: var(--panel); color: var(--muted); font-size: 12px; }
+  footer .spacer { flex: 1; }
+
+  .backdrop { position: fixed; inset: 0; background: rgba(20, 28, 38, .45); z-index: 5; display: none;
+    align-items: center; justify-content: center; padding: 24px; }
+  .backdrop.open { display: flex; }
+  .drawer { width: min(900px, 100%); max-height: min(88vh, 1000px); background: var(--panel); border-radius: 10px;
+    box-shadow: 0 18px 50px rgba(20, 30, 40, .28); display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+  .drawer .dh { padding: 12px 16px; border-bottom: 1px solid var(--rule); display: flex; align-items: start; gap: 10px; }
+  .drawer .dh h3 { margin: 0; font-family: var(--mono); font-size: 14px; }
+  .drawer .dh .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .drawer .dh .x { margin-left: auto; }
+  .drawer .db { overflow: auto; padding: 4px 16px 20px; }
+  .drawer h5 { margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  dl.kv { display: grid; grid-template-columns: 200px 1fr; gap: 3px 12px; margin: 0; font-size: 12px; }
+  dl.kv dt { color: var(--muted); font-family: var(--mono); font-size: 11px; padding-top: 1px; }
+  dl.kv dd { margin: 0; word-break: break-word; }
+  .ab { display: inline-block; width: 60px; height: 7px; background: var(--rule2); border-radius: 4px; vertical-align: middle; position: relative; overflow: hidden; }
+  .ab i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+
+  .empty { padding: 48px 24px; text-align: center; color: var(--muted); max-width: 620px; margin: 0 auto; }
+  .empty h2 { color: var(--ink); font-size: 18px; margin: 0 0 8px; }
+  .empty ol { text-align: left; display: inline-block; margin: 10px 0; }
+  .err { color: var(--high); white-space: pre-wrap; }
+  .about { padding: 16px 20px; max-width: 760px; }
+  .about table { border-collapse: collapse; } .about td { padding: 3px 12px 3px 0; vertical-align: top; }
+  .busy { opacity: .55; pointer-events: none; }
+  .cr { padding: 12px 18px 24px; }
+  .cr .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .cr .bar select { padding: 4px 6px; border: 1px solid var(--rule); border-radius: 5px; background: #fff; }
+  .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px; }
+  .tile { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 12px; min-width: 130px; cursor: pointer; }
+  .tile:hover { border-color: var(--accent); }
+  .tile b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 11.5px; }
+  .chartwrap { position: relative; }
+  .chartwrap svg { display: block; width: 100%; }
+  .chartwrap .tip { position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(20,30,40,.14); padding: 7px 9px; font-size: 12px; display: none; white-space: nowrap; }
+  .legend { display: flex; gap: 16px; color: var(--muted); font-size: 12px; margin: 2px 0 4px; }
+  .legend i { display: inline-block; vertical-align: middle; margin-right: 5px; }
+
+  .tile { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 12px; min-width: 130px; }
+  .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px; }
+  .tile b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--muted); font-size: 11.5px; }
+  .dir-up { color: var(--high); font-weight: 600; } .dir-down { color: #1d5fa8; font-weight: 600; }
+  .compsel { padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: #fff; max-width: 280px; }
+  .about li { margin: 4px 0; }
+  .genes { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .grid td.wrap { white-space: normal; max-width: 420px; }
+  .brand { font-size: 12.5px; } header { flex-wrap: wrap; row-gap: 6px; } .search { max-width: 460px; } .compsel { max-width: 240px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">Evidome Evidence Browser<small id="stamp">Your files stay on this computer</small></div>
+    <form class="search" id="searchForm">
+      <input id="q" placeholder="Gene symbol, gene set name or ID, or regulator; empty = everything" autocomplete="off" disabled>
+      <button class="btn primary" id="go" disabled>Search</button>
+    </form>
+    <select id="comp" class="compsel" disabled title="Comparison"><option>No evidence open</option></select>
+    <span class="project" id="project"></span>
+    <label class="btn primary" for="pickZip">Open evidence (.zip)…</label>
+    <input type="file" id="pickZip" accept=".zip,application/zip" hidden>
+    <label class="btn" for="pick" title="An unzipped evidence folder">Open folder…</label>
+    <input type="file" id="pick" webkitdirectory directory multiple hidden>
+  </header>
+  <div class="body">
+    <aside id="filters">
+      <h4>q-value at most</h4>
+      <select id="f_q">
+        <option value="">Any</option>
+        <option value="0.25">0.25</option>
+        <option value="0.1">0.1</option>
+        <option value="0.05" selected>0.05</option>
+        <option value="0.01">0.01</option>
+      </select>
+      <div class="hint">Gene sets: the result's q. Regulators: the overlap q or the activity q.</div>
+      <h4>Gene-set source</h4>
+      <div id="f_sources"><span class="hint">Open an evidence zip.</span></div>
+      <h4>Direction</h4>
+      <select id="f_dir"><option value="">Any</option></select>
+      <h4>Gene-set size</h4>
+      <div class="row2">
+        <div><span>At least</span><input type="number" id="f_min" min="0" placeholder="any"></div>
+        <div><span>At most</span><input type="number" id="f_max" min="0" placeholder="any"></div>
+      </div>
+      <h4>Regulator network</h4>
+      <div id="f_networks"><span class="hint">Open an evidence zip.</span></div>
+      <h4>Genes</h4>
+      <label><input type="checkbox" id="f_sig" checked> Only significant genes</label>
+      <div style="margin-top:14px; display:flex; gap:6px">
+        <button class="btn" id="apply" disabled>Apply</button>
+        <button class="btn" id="reset">Reset</button>
+      </div>
+    </aside>
+    <main>
+      <nav class="tabs">
+        <button class="tab on" data-tab="findings">Findings</button>
+        <button class="tab" data-tab="ora">ORA</button>
+        <button class="tab" data-tab="gsea">GSEA</button>
+        <button class="tab" data-tab="regulators">Regulators</button>
+        <button class="tab" data-tab="genes">Genes</button>
+        <button class="tab" data-tab="comparisons">Comparisons</button>
+        <button class="tab" data-tab="about">About this evidence</button>
+        <span class="status" id="status"></span>
+      </nav>
+      <section class="view" id="view">
+        <div class="empty">
+          <h2>Open an Evidome evidence zip to start</h2>
+          <ol>
+            <li>Click <b>Open evidence (.zip)…</b> and choose the evidence zip that <code>evidome report</code> wrote (the <code>…_combined_results.zip</code>); nothing needs unzipping. (<b>Open folder…</b> takes an unzipped evidence folder.)</li>
+            <li>Pick a comparison at the top, or all of them.</li>
+            <li>Click any gene set, regulator or gene for its genes and statistics; every list exports as TSV.</li>
+          </ol>
+          <p class="hint">The files are read on this computer and never uploaded. Only the program itself comes from the web.</p>
+        </div>
+      </section>
+      <footer>
+        <span id="count"></span><span class="spacer"></span>
+        <button class="btn" id="prev" disabled>‹ Prev</button><span id="page"></span><button class="btn" id="next" disabled>Next ›</button>
+        <button class="btn" id="export" disabled>Export TSV</button>
+      </footer>
+    </main>
+  </div>
+</div>
+<div class="backdrop" id="backdrop"><div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dTitle"><div class="dh"><div><h3 id="dTitle"></h3><div class="sub" id="dSub"></div></div><button class="btn x" id="dExport">Export TSV</button><button class="btn" id="dClose">Close</button></div><div class="db" id="dBody"></div></div></div>
+
+<script type="module">
+const CFG = window.VB_CONFIG || {};
+// 1.28.0: the same DuckDB-WASM as the Paralome variant browser; it reads CSV
+// with nothing fetched beyond the library itself.
+const DUCKDB_VERSION = "1.28.0";
+const DUCKDB_ESM = CFG.duckdbModule || `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/+esm`;
+const PAGE = 100;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s == null ? "" : String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let duckdb, db, conn, manifest = null;
+let files = new Map();          // evidence-relative path -> Blob-like (arrayBuffer(), text())
+let tables = new Map();         // table name -> its columns, once read
+let tab = "findings";
+let state = { sql: "", order: "", dir: "", page: 0, total: 0, label: "" };
+let drawerRows = null;          // { head, rows, name } of the open pop-up
+
+function status(t) { $("status").textContent = t || ""; }
+
+// The program that wrote this copy of the page (stamped into it when it was put in an evidence zip).
+const WRITTEN_BY = (document.querySelector('meta[name="written-by"]') || {}).content || "";
+if (WRITTEN_BY) {
+  document.title = `${document.title} (${WRITTEN_BY})`;
+  $("stamp").textContent = `Written by ${WRITTEN_BY} · your files stay on this computer`;
+}
+
+async function startDuckDB() {
+  duckdb = await import(DUCKDB_ESM);
+  const bundles = CFG.duckdbBase ? {
+      mvp: { mainModule: CFG.duckdbBase + "duckdb-mvp.wasm", mainWorker: CFG.duckdbBase + "duckdb-browser-mvp.worker.js" },
+      eh: { mainModule: CFG.duckdbBase + "duckdb-eh.wasm", mainWorker: CFG.duckdbBase + "duckdb-browser-eh.worker.js" },
+    } : duckdb.getJsDelivrBundles();
+  const bundle = await duckdb.selectBundle(bundles);
+  const workerUrl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
+  db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), new Worker(workerUrl));
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  URL.revokeObjectURL(workerUrl);
+  conn = await db.connect();
+}
+
+
+function lit(v) {
+  if (typeof v === "number" || typeof v === "bigint") { const n = Number(v); if (!Number.isFinite(n)) throw new Error("bad number"); return String(n); }
+  return "'" + String(v).replace(/'/g, "''") + "'";
+}
+async function q(sql) { return (await conn.query(sql)).toArray().map(r => r.toJSON()); }
+
+
+const ident = (c) => '"' + String(c).replace(/"/g, '""') + '"';
+
+// Each CSV becomes a table the first time a tab needs it: inflated from the zip,
+// handed to DuckDB, parsed with every row seen for its types, and the text let go.
+const TABLES = {
+  comparisons: "comparisons.csv", findings: "findings.csv", ora: "enrichment_ora.csv", gsea: "enrichment_gsea.csv",
+  regulators: "regulators.csv", genes: "human_gene_statistics.csv", crosswalk: "ortholog_crosswalk.csv",
+  ballots: "collision_ballots.csv", gene_sets: "gene_sets.csv",
+};
+async function need(t) {
+  if (tables.has(t)) return tables.get(t);
+  const path = TABLES[t];
+  if (!files.has(path)) { tables.set(t, null); return null; }
+  status(`Reading ${path}…`);
+  const name = "ev/" + path;
+  await db.registerFileBuffer(name, new Uint8Array(await files.get(path).arrayBuffer()));
+  // Read as text, then typed here: a column whose every value is a number becomes a
+  // number, one of only yes/no a true/false (the sniffer of this DuckDB guesses
+  // yes/no as boolean and then fails on it).
+  await conn.query(`CREATE OR REPLACE TABLE ${t}_raw AS SELECT * FROM read_csv_auto(${lit(name)}, header = true, all_varchar = true, sample_size = -1)`);
+  try { await db.dropFile(name); } catch (e) {}
+  const raw = (await q(`DESCRIBE ${t}_raw`)).map(r => r.column_name);
+  const probe = raw.map((c, i) => `count(*) FILTER (WHERE ${ident(c)} IS NOT NULL AND ${ident(c)} <> '' AND TRY_CAST(${ident(c)} AS DOUBLE) IS NULL) AS n${i},
+      count(*) FILTER (WHERE ${ident(c)} IS NOT NULL AND ${ident(c)} <> '' AND (TRY_CAST(${ident(c)} AS BIGINT) IS NULL OR strpos(${ident(c)}, '.') > 0 OR strpos(lower(${ident(c)}), 'e') > 0)) AS f${i},
+      count(*) FILTER (WHERE ${ident(c)} IS NOT NULL AND ${ident(c)} <> '' AND lower(${ident(c)}) NOT IN ('yes', 'no')) AS b${i},
+      count(*) FILTER (WHERE ${ident(c)} IS NOT NULL AND ${ident(c)} <> '') AS v${i}`).join(", ");
+  const st = (await q(`SELECT ${probe} FROM ${t}_raw`))[0];
+  const sel = raw.map((c, i) => {
+    const n = Number(st["n" + i]), f = Number(st["f" + i]), bb = Number(st["b" + i]), v = Number(st["v" + i]), x = `NULLIF(${ident(c)}, '')`;
+    if (v && bb === 0) return `(lower(${x}) = 'yes') AS ${ident(c)}`;
+    if (v && n === 0) return `TRY_CAST(${x} AS ${f === 0 ? "BIGINT" : "DOUBLE"}) AS ${ident(c)}`;
+    return `${x} AS ${ident(c)}`;
+  }).join(", ");
+  await conn.query(`CREATE OR REPLACE TABLE ${t} AS SELECT ${sel} FROM ${t}_raw`);
+  await conn.query(`DROP TABLE ${t}_raw`);
+  const cols = raw;
+  tables.set(t, cols);
+  return cols;
+}
+const has = (t, c) => (tables.get(t) || []).includes(c);
+
+// ---------------------------------------------------------------- reading a zip in place
+// The bundle is read straight out of its zip: the central directory says where
+// each file's bytes are, and a file stored as-is (zip -0) is just a slice of the
+// zip, read only when a search needs it. A compressed one is inflated by the
+// browser's own DecompressionStream. ZIP64 (bundles over 4 GB) is read too.
+async function zipEntries(zip) {
+  const u32 = (dv, o) => dv.getUint32(o, true), u16 = (dv, o) => dv.getUint16(o, true);
+  const u64 = (dv, o) => Number(dv.getBigUint64(o, true));
+  const tailLen = Math.min(zip.size, 65557);
+  const tail = new DataView(await zip.slice(zip.size - tailLen).arrayBuffer());
+  let eocd = -1;
+  for (let i = tailLen - 22; i >= 0; i--) if (u32(tail, i) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("That file is not a zip file.");
+  let count = u16(tail, eocd + 10), cdSize = u32(tail, eocd + 12), cdOffset = u32(tail, eocd + 16);
+  if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
+    const loc = eocd - 20;
+    if (loc < 0 || u32(tail, loc) !== 0x07064b50) throw new Error("ZIP64 locator not found.");
+    const z64at = u64(tail, loc + 8);
+    const z = new DataView(await zip.slice(z64at, z64at + 56).arrayBuffer());
+    if (u32(z, 0) !== 0x06064b50) throw new Error("ZIP64 directory not found.");
+    count = u64(z, 32); cdSize = u64(z, 40); cdOffset = u64(z, 48);
+  }
+  const cd = new DataView(await zip.slice(cdOffset, cdOffset + cdSize).arrayBuffer());
+  const dec = new TextDecoder();
+  const out = [];
+  for (let o = 0, k = 0; k < count; k++) {
+    if (u32(cd, o) !== 0x02014b50) throw new Error("The zip's directory is damaged.");
+    const method = u16(cd, o + 10);
+    let csize = u32(cd, o + 20), usize = u32(cd, o + 24), local = u32(cd, o + 42);
+    const nlen = u16(cd, o + 28), xlen = u16(cd, o + 30), clen = u16(cd, o + 32);
+    const name = dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + o + 46, nlen));
+    for (let x = o + 46 + nlen; x < o + 46 + nlen + xlen;) {
+      const id = u16(cd, x), size = u16(cd, x + 2);
+      if (id === 0x0001) {     // ZIP64 extra: the 0xFFFFFFFF fields, in this order
+        let p = x + 4;
+        if (usize === 0xffffffff) { usize = u64(cd, p); p += 8; }
+        if (csize === 0xffffffff) { csize = u64(cd, p); p += 8; }
+        if (local === 0xffffffff) { local = u64(cd, p); p += 8; }
+      }
+      x += 4 + size;
+    }
+    out.push({ name, method, csize, usize, local });
+    o += 46 + nlen + xlen + clen;
+  }
+  return out;
+}
+function zipMember(zip, e) {
+  // The local header's own name and extra lengths say where the data starts.
+  const start = async () => { const h = new DataView(await zip.slice(e.local, e.local + 30).arrayBuffer());
+    return e.local + 30 + h.getUint16(26, true) + h.getUint16(28, true); };
+  const bytes = async () => {
+    const s = await start();
+    const raw = zip.slice(s, s + e.csize);
+    if (e.method === 0) return raw.arrayBuffer();
+    if (e.method === 8) return new Response(raw.stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer();
+    throw new Error(`${e.name}: compression method ${e.method} is not readable here; zip the bundle with zip -0 (stored).`);
+  };
+  return { arrayBuffer: bytes, text: async () => new TextDecoder().decode(await bytes()) };
+}
+
+
+$("pickZip").addEventListener("change", async (ev) => {
+  const zip = ev.target.files[0];
+  ev.target.value = "";
+  if (!zip) return;
+  try {
+    status("Reading the zip…");
+    const entries = (await zipEntries(zip)).filter(e => !e.name.endsWith("/"));
+    const man = entries.find(e => e.name === "manifest.json" || e.name.endsWith("/manifest.json"));
+    if (!man) throw new Error("That zip holds no manifest.json: it is not an Evidome evidence zip.");
+    const root = man.name.slice(0, man.name.length - "manifest.json".length);
+    files = new Map(entries.filter(e => e.name.startsWith(root)).map(e => [e.name.slice(root.length), zipMember(zip, e)]));
+  } catch (e) { showError(e); return; }
+  await openEvidence(zip.name);
+});
+$("pick").addEventListener("change", async (ev) => {
+  const picked = [...ev.target.files];
+  ev.target.value = "";
+  files = new Map(picked.map(f => { const rel = (f.webkitRelativePath || f.name).split("/"); return [rel.length > 1 ? rel.slice(1).join("/") : rel[0], f]; }));
+  await openEvidence(picked[0] ? (picked[0].webkitRelativePath || "").split("/")[0] : "");
+});
+
+async function openEvidence(label) {
+  if (!files.has("manifest.json") || !files.has("comparisons.csv")) { showError("That is not an Evidome evidence bundle (no manifest.json or comparisons.csv): choose the evidence zip, or the evidence folder itself."); return; }
+  try {
+    document.body.classList.add("busy"); status("Opening…");
+    manifest = JSON.parse(await files.get("manifest.json").text());
+    if (!/\.evidence\.v1$/.test(manifest.schema || "")) throw new Error(`This evidence was written in a format this page does not know (${manifest.schema || "no schema"}).`);
+    if (!db) await startDuckDB();
+    for (const t of tables.keys()) await conn.query(`DROP TABLE IF EXISTS ${t}`);
+    tables.clear();
+    await need("comparisons"); await need("findings");
+    const comps = await q(`SELECT comparison, kind FROM comparisons ORDER BY rowid`);
+    $("comp").innerHTML = `<option value="">All comparisons</option>` + comps.map(c => `<option value="${esc(c.comparison)}">${esc(c.comparison)}${c.kind ? " (" + esc(c.kind) + ")" : ""}</option>`).join("");
+    if (comps.length) $("comp").value = comps[0].comparison;
+    // The filter lists come from the data: findings first, the full tables when they are read.
+    const src = (await q(`SELECT DISTINCT source FROM findings WHERE source IS NOT NULL ORDER BY 1`)).map(r => r.source);
+    const allSources = (manifest.provenance && manifest.provenance.gene_sets && manifest.provenance.gene_sets.sources_used) || src;
+    $("f_sources").innerHTML = allSources.map(s => `<label><input type="checkbox" class="f_src" value="${esc(s)}" checked> ${esc(s)}</label>`).join("");
+    const nets = (manifest.provenance && manifest.provenance.regulator_settings && manifest.provenance.regulator_settings.networks) || ["collectri", "signalling_via_tf"];
+    $("f_networks").innerHTML = nets.map(s => `<label><input type="checkbox" class="f_net" value="${esc(s)}" checked> ${esc(s)}</label>`).join("");
+    const dirs = (await q(`SELECT DISTINCT direction FROM findings WHERE direction IS NOT NULL ORDER BY 1`)).map(r => r.direction);
+    $("f_dir").innerHTML = `<option value="">Any</option>` + [...new Set(["up", "down", "all", ...dirs])].map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
+    const inp = manifest.provenance && manifest.provenance.input_table;
+    $("project").innerHTML = `<b>${esc(inp || label || "evidence")}</b> · ${comps.length} comparison${comps.length === 1 ? "" : "s"}`;
+    for (const id of ["q", "go", "apply", "comp"]) $(id).disabled = false;
+    await show();
+  } catch (e) { showError(e); } finally { document.body.classList.remove("busy"); }
+}
+
+function showError(e) {
+  $("view").innerHTML = `<div class="empty"><h2>Something went wrong</h2><div class="err">${esc(e && e.message || e)}</div></div>`;
+  status(""); console.error(e);
+}
+
+// ---------------------------------------------------------------- formatting
+const num = (x, d = 3) => x == null ? "" : typeof x === "bigint" ? x.toString() : typeof x !== "number" ? esc(x) :
+  Number.isInteger(x) && Math.abs(x) < 1e15 ? x.toLocaleString() : Math.abs(x) !== 0 && (Math.abs(x) < 1e-3 || Math.abs(x) >= 1e5) ? x.toExponential(2) : x.toFixed(d);
+const pv = (x) => x == null ? "" : typeof x !== "number" ? esc(x) : x === 0 ? "0" : x < 1e-3 ? x.toExponential(2) : x.toFixed(4);
+const dirc = (d) => d === "up" ? `<span class="dir-up">up</span>` : d === "down" ? `<span class="dir-down">down</span>` : esc(d);
+const signed = (x) => x == null ? "" : `<span class="${x > 0 ? "dir-up" : x < 0 ? "dir-down" : ""}">${num(x, 2)}</span>`;
+const ngenes = (g) => g ? String(g).split(";").filter(Boolean).length : 0;
+const genesCell = (g) => { const a = g ? String(g).split(";").filter(Boolean) : []; return `<span class="genes" title="${esc(a.join(", "))}">${esc(a.slice(0, 8).join(", "))}${a.length > 8 ? ` … +${a.length - 8}` : ""}</span>`; };
+function cell(v) { if (v == null) return ""; if (typeof v === "boolean") return v ? "yes" : "no"; if (typeof v === "number" || typeof v === "bigint") return num(v); return esc(v); }
+
+// ---------------------------------------------------------------- the tabs
+// Each tab: its table, the columns it lists (those the file has), and how its rows
+// are found. The search and the filters on the left apply where they make sense.
+const TABS = {
+  findings: { t: "findings", key: "set", order: "q", cols: [
+    ["comparison", "Comparison", cell, "all"], ["method", "Method", cell], ["direction", "Direction", dirc], ["source", "Source", cell],
+    ["rank", "Rank", cell, null, true], ["name", "Gene set", (v, r) => `<b>${esc(v)}</b> <span class="hint">${esc(r.set_id)}</span>`],
+    ["set_size", "Size", cell, null, true], ["effect", "Effect", signed, null, true], ["p", "p", pv, null, true], ["q", "q", pv, null, true],
+    ["genes", "Genes", (v) => `${ngenes(v)}: ${genesCell(v)}`]] },
+  ora: { t: "ora", key: "set", order: "q", cols: [
+    ["comparison", "Comparison", cell, "all"], ["direction", "Direction", dirc], ["source", "Source", cell],
+    ["name", "Gene set", (v, r) => `<b>${esc(v)}</b> <span class="hint">${esc(r.set_id)}</span>`], ["set_size", "Size", cell, null, true],
+    ["overlap", "Overlap", cell, null, true], ["expected", "Expected", (v) => num(v, 2), null, true], ["fold_enrichment", "Fold enrichment", (v) => num(v, 2), null, true],
+    ["p", "p", pv, null, true], ["q", "q", pv, null, true], ["null_model", "Null model", cell], ["overlap_genes", "Overlap genes", genesCell]] },
+  gsea: { t: "gsea", key: "set", order: "q", cols: [
+    ["comparison", "Comparison", cell, "all"], ["source", "Source", cell], ["name", "Gene set", (v, r) => `<b>${esc(v)}</b> <span class="hint">${esc(r.set_id)}</span>`],
+    ["set_size", "Size", cell, null, true], ["nes", "NES", signed, null, true], ["p", "p", pv, null, true], ["q", "q", pv, null, true],
+    ["permutations", "Permutations", cell, null, true], ["leading_edge_size", "Leading edge", cell, null, true], ["leading_edge_genes", "Leading-edge genes", genesCell]] },
+  regulators: { t: "regulators", key: "reg", order: "overlap_q", cols: [
+    ["comparison", "Comparison", cell, "all"], ["network", "Network", cell], ["regulator", "Regulator", (v) => `<b>${esc(v)}</b>`], ["regulator_kind", "Kind", cell],
+    ["targets_in_universe", "Targets", cell, null, true], ["significant_targets", "Significant targets", cell, null, true],
+    ["overlap_q", "Overlap q", pv, null, true], ["n_consistent", "Consistent", cell, null, true], ["n_inconsistent", "Inconsistent", cell, null, true],
+    ["activation_z", "Activation z", signed, null, true], ["activation_z_bias_corrected", "z (bias corrected)", signed, null, true],
+    ["activity_t", "Activity t", signed, null, true], ["activity_q", "Activity q", pv, null, true], ["regulator_direction", "Regulator's own direction", cell]] },
+  comparisons: { t: "comparisons", key: "comp", order: "rowid", cols: null },
+};
+
+function selectedComp() { return $("comp").value; }
+function where(t) {
+  const w = [], cols = tables.get(t) || [], comp = selectedComp();
+  if (comp && cols.includes("comparison") && t !== "comparisons") w.push(`comparison = ${lit(comp)}`);
+  const text = $("q").value.trim();
+  const qv = $("f_q").value;
+  if (["findings", "ora", "gsea"].includes(t)) {
+    const src = [...document.querySelectorAll(".f_src:checked")].map(x => x.value), all = document.querySelectorAll(".f_src").length;
+    if (src.length < all) w.push(src.length ? `source IN (${src.map(lit).join(",")})` : "false");
+    if ($("f_dir").value && cols.includes("direction")) w.push(`direction = ${lit($("f_dir").value)}`);
+    if (qv) w.push(`q <= ${lit(+qv)}`);
+    if ($("f_min").value !== "") w.push(`set_size >= ${lit(+$("f_min").value)}`);
+    if ($("f_max").value !== "") w.push(`set_size <= ${lit(+$("f_max").value)}`);
+    if (text) {
+      const gcol = t === "findings" ? "genes" : t === "ora" ? "overlap_genes" : "leading_edge_genes";
+      w.push(`(name ILIKE ${lit("%" + text + "%")} OR set_id ILIKE ${lit("%" + text + "%")} OR list_contains(string_split(upper(coalesce(${gcol}, '')), ';'), ${lit(text.toUpperCase())}))`);
+    }
+  }
+  if (t === "regulators") {
+    const net = [...document.querySelectorAll(".f_net:checked")].map(x => x.value), all = document.querySelectorAll(".f_net").length;
+    if (net.length < all) w.push(net.length ? `network IN (${net.map(lit).join(",")})` : "false");
+    if (qv) w.push(`(overlap_q <= ${lit(+qv)}${cols.includes("activity_q") ? ` OR activity_q <= ${lit(+qv)}` : ""})`);
+    if (text) w.push(`(regulator ILIKE ${lit("%" + text + "%")} OR list_contains(string_split(upper(coalesce(consistent_targets, '') || ';' || coalesce(inconsistent_targets, '')), ';'), ${lit(text.toUpperCase())}))`);
+  }
+  if (t === "genes") {
+    if ($("f_sig").checked && cols.includes("significant")) w.push(`significant`);
+    if (text) w.push(`(human_symbol ILIKE ${lit(text + "%")} OR human_gene_id ILIKE ${lit(text + "%")} OR source_symbol ILIKE ${lit(text + "%")} OR source_gene_id ILIKE ${lit(text + "%")})`);
+  }
+  return w.length ? "WHERE " + w.join(" AND ") : "";
+}
+
+// The statistics columns of the input table: everything after the gene-identity
+// columns in human_gene_statistics (they differ by the program that made the input).
+const ID_COLS = new Set(["comparison", "human_gene_id", "human_symbol", "human_biotype", "tested", "significant", "source_gene_id", "source_symbol",
+  "source_biotype", "homology_source", "homology_type", "is_high_confidence", "identity_pct", "human_identity_pct", "source_human_targets",
+  "n_candidates", "n_tested_candidates", "candidates", "decided_by", "tie"]);
+const statCols = (cols) => (cols || []).filter(c => !ID_COLS.has(c));
+function geneCols() {
+  const cols = tables.get("genes") || [];
+  return [["comparison", "Comparison", cell, "all"], ["human_symbol", "Human gene", (v, r) => `<b>${esc(v || r.human_gene_id)}</b>`], ["human_gene_id", "Ensembl (human)", (v) => `<span class="mono">${esc(v)}</span>`],
+    ["source_gene_id", "Input gene", (v, r) => `<span class="mono">${esc(v)}</span>${r.source_symbol && r.source_symbol !== r.human_symbol ? " " + esc(r.source_symbol) : ""}`],
+    ["homology_source", "Homology", cell], ["significant", "Significant", cell],
+    ...statCols(cols).map(c => [c, c.replace(/_/g, " "), (v) => /(^|_|-)(p|q|p-value|q-value)$/i.test(c) || /_(p|q)$/.test(c) ? pv(v) : cell(v), null, true])];
+}
+
+async function show() {
+  try {
+    document.body.classList.add("busy");
+    const t0 = performance.now();
+    const def = tab === "genes" ? { t: "genes", key: "gene", order: "", cols: null } : TABS[tab];
+    if (tab === "about") { showAbout(); return; }
+    const cols = await need(def.t);
+    if (!cols) { $("view").innerHTML = `<div class="empty"><h2>Not in this evidence</h2><p>The zip has no ${esc(TABLES[def.t])}.</p></div>`; return; }
+    const w = where(def.t);
+    let order = state.tab === tab && state.order ? state.order : def.order;
+    if (tab === "genes" && !order) { const pc = statCols(cols).find(c => /^(P-value|ANOVA_p|p|pvalue|P\.Value)$/i.test(c)); order = pc ? ident(pc) : "human_symbol"; }
+    state = { tab, sql: `FROM ${def.t} ${w}`, order, dir: state.tab === tab ? state.dir : "", page: 0, total: 0,
+              label: `${tab} · ${selectedComp() || "all comparisons"}${$("q").value.trim() ? " · " + $("q").value.trim() : ""}` };
+    state.total = Number((await q(`SELECT count(*) AS n ${state.sql}`))[0].n);
+    await renderPage();
+    status(`${(performance.now() - t0).toFixed(0)} ms`);
+  } catch (e) { showError(e); } finally { document.body.classList.remove("busy"); }
+}
+
+function listCols() {
+  if (tab === "genes") return geneCols();
+  if (tab === "comparisons") return (tables.get("comparisons") || []).map(c => [c, c.replace(/_/g, " "), (v, r) => c === "comparison" ? `<b>${esc(v)}</b>` : cell(v)]);
+  return TABS[tab].cols;
+}
+async function renderPage() {
+  let cols = listCols().filter(c => (tables.get(state.tab === "genes" ? "genes" : TABS[state.tab].t) || []).includes(c[0]) && !(c[3] === "all" && selectedComp()));
+  let rows = await q(`SELECT * ${state.sql} ORDER BY ${state.order} ${state.dir} NULLS LAST LIMIT ${PAGE} OFFSET ${state.page * PAGE}`);
+  if (state.tab === "genes") cols = cols.filter(c => c[4] !== true || rows.some(r => r[c[0]] != null));   // statistics this comparison has
+  if (!rows.length) {
+    $("view").innerHTML = `<div class="empty"><h2>Nothing matches</h2><p>${esc(state.label)}: loosen a filter on the left (the q-value is the usual one), or pick another comparison.</p></div>`;
+  } else {
+    $("view").innerHTML = `<table class="grid"><thead><tr>${cols.map(c => `<th data-s="${esc(ident(c[0]))}" class="${ident(c[0]) === state.order ? "sorted " + (state.dir ? "" : "asc") : ""}">${esc(c[1])}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((r, i) => `<tr data-i="${i}">${cols.map(c => `<td class="${c[4] ? "num" : ""}">${c[2](r[c[0]], r)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    pageRows = rows;
+  }
+  const pages = Math.max(1, Math.ceil(state.total / PAGE));
+  $("count").textContent = `${state.total.toLocaleString()} row${state.total === 1 ? "" : "s"} · ${state.label}`;
+  $("page").textContent = `page ${state.page + 1} of ${pages.toLocaleString()}`;
+  $("prev").disabled = state.page === 0; $("next").disabled = state.page + 1 >= pages; $("export").disabled = !state.total;
+}
+let pageRows = [];
+
+$("view").addEventListener("click", async (ev) => {
+  const th = ev.target.closest("th[data-s]");
+  if (th) {
+    if (state.order === th.dataset.s) state.dir = state.dir ? "" : "DESC"; else { state.order = th.dataset.s; state.dir = ""; }
+    state.page = 0; await renderPage(); return;
+  }
+  const tr = ev.target.closest("tr[data-i]");
+  if (!tr) return;
+  document.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel")); tr.classList.add("sel");
+  const r = pageRows[+tr.dataset.i];
+  if (state.tab === "comparisons") { $("comp").value = r.comparison; switchTab("findings"); return; }
+  if (state.tab === "findings" && /^REGULATOR/i.test(r.method || "")) await openRegulatorOf(r.comparison || selectedComp(), r.source, r.name);
+  else if (["findings", "ora", "gsea"].includes(state.tab)) await openSet(r);
+  else if (state.tab === "regulators") await openRegulator(r);
+  else if (state.tab === "genes") await openGene(r.human_gene_id, r.human_symbol);
+});
+
+// ---------------------------------------------------------------- pop-ups
+function openDrawer(title, sub, html, exp) {
+  status("");
+  $("dTitle").textContent = title; $("dSub").textContent = sub; $("dBody").innerHTML = html;
+  drawerRows = exp; $("dExport").disabled = !exp || !exp.rows.length;
+  $("backdrop").classList.add("open"); $("dClose").focus();
+}
+$("dClose").onclick = () => $("backdrop").classList.remove("open");
+$("backdrop").addEventListener("click", e => { if (e.target === $("backdrop")) $("backdrop").classList.remove("open"); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("backdrop").classList.remove("open"); });
+$("dBody").addEventListener("click", async (ev) => {
+  const g = ev.target.closest("[data-gene]");
+  if (g) { await openGene(g.dataset.gene, g.dataset.sym); return; }
+  const s = ev.target.closest("[data-set]");
+  if (s) { await openSet({ set_id: s.dataset.set, comparison: s.dataset.comp, source: s.dataset.src }); }
+});
+$("dExport").onclick = () => { if (drawerRows) downloadTSV(drawerRows.head, drawerRows.rows, drawerRows.name); };
+
+// A list of genes, joined to their statistics in one comparison.
+async function geneTable(comp, symbols) {
+  if (!symbols.length) return { html: `<p class="hint">No genes listed.</p>`, head: [], rows: [] };
+  const cols = await need("genes");
+  let sc = statCols(cols);
+  const rows = await q(`SELECT s.sym AS listed, g.* FROM (SELECT unnest(${`[${symbols.map(lit).join(",")}]`}) AS sym) s
+      LEFT JOIN (SELECT * FROM genes WHERE comparison = ${lit(comp)}) g ON upper(g.human_symbol) = upper(s.sym)
+      ORDER BY g.significant DESC NULLS LAST, s.sym`);
+  sc = sc.filter(c => rows.some(r => r[c] != null));     // the statistics this comparison has
+  const head = ["gene", "human_gene_id", "input_gene_id", "significant", ...sc];
+  const html = `<table class="grid" style="font-size:12px"><thead><tr><th>Gene</th><th>Input gene</th><th>Significant</th>${sc.map(c => `<th class="num">${esc(c.replace(/_/g, " "))}</th>`).join("")}</tr></thead><tbody>${rows.map(r =>
+    `<tr data-gene="${esc(r.human_gene_id || "")}" data-sym="${esc(r.listed)}"><td><b>${esc(r.listed)}</b></td><td class="mono">${esc(r.source_gene_id || "")}${r.source_symbol && r.source_symbol !== r.listed ? " " + esc(r.source_symbol) : ""}</td><td>${cell(r.significant)}</td>${sc.map(c => `<td class="num">${/_?(p|q)$|value$/i.test(c) ? pv(r[c]) : cell(r[c])}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  return { html, head, rows: rows.map(r => [r.listed, r.human_gene_id, r.source_gene_id, r.significant, ...sc.map(c => r[c])]) };
+}
+
+async function openSet(r) {
+  const comp = r.comparison || selectedComp();
+  await need("ora"); await need("gsea");
+  const ora = tables.get("ora") ? await q(`SELECT * FROM ora WHERE set_id = ${lit(r.set_id)} AND comparison = ${lit(comp)} ORDER BY direction`) : [];
+  const gsea = tables.get("gsea") ? await q(`SELECT * FROM gsea WHERE set_id = ${lit(r.set_id)} AND comparison = ${lit(comp)}`) : [];
+  const info = ora[0] || gsea[0] || r;
+  // The genes: those of the clicked result, else the union of the set's overlap and leading-edge genes here.
+  let listed = r.genes || r.overlap_genes || r.leading_edge_genes;
+  if (!listed) listed = [...ora.map(x => x.overlap_genes), ...gsea.map(x => x.leading_edge_genes)].filter(Boolean).join(";");
+  const symbols = [...new Set(String(listed || "").split(";").filter(Boolean))];
+  const gt = await geneTable(comp, symbols);
+  const across = tables.get("ora") ? await q(`SELECT o.comparison, min(o.q) AS ora_q, any_value(g.nes) AS nes, any_value(g.q) AS gsea_q FROM ora o
+      LEFT JOIN gsea g ON g.set_id = o.set_id AND g.comparison = o.comparison WHERE o.set_id = ${lit(r.set_id)} GROUP BY o.comparison ORDER BY min(o.q)`) : [];
+  const which = r.genes ? "the genes of this result" : r.overlap_genes ? "its overlap with the significant genes" : r.leading_edge_genes ? "its GSEA leading edge" : "its overlap and leading-edge genes";
+  const html = `<h5>Results in ${esc(comp)}</h5>
+    <table class="grid" style="font-size:12px"><thead><tr><th>Method</th><th>Direction</th><th class="num">Overlap / leading edge</th><th class="num">Fold enrichment / NES</th><th class="num">p</th><th class="num">q</th></tr></thead><tbody>
+    ${ora.map(x => `<tr><td>ORA</td><td>${dirc(x.direction)}</td><td class="num">${cell(x.overlap)}</td><td class="num">${num(x.fold_enrichment, 2)}</td><td class="num">${pv(x.p)}</td><td class="num">${pv(x.q)}</td></tr>`).join("")}
+    ${gsea.map(x => `<tr><td>GSEA</td><td>${x.nes > 0 ? dirc("up") : x.nes < 0 ? dirc("down") : ""}</td><td class="num">${cell(x.leading_edge_size)}</td><td class="num">${signed(x.nes)}</td><td class="num">${pv(x.p)}</td><td class="num">${pv(x.q)}</td></tr>`).join("")}
+    </tbody></table>
+    <h5>Genes: ${esc(which)} (${symbols.length})</h5>${gt.html}
+    <p class="hint">The evidence lists a set's genes that overlap the significant genes (ORA) or lead its GSEA score, not every member. Click a gene for all it touches.</p>
+    ${across.length > 1 ? `<h5>This set in every comparison</h5><table class="grid" style="font-size:12px"><thead><tr><th>Comparison</th><th class="num">Best ORA q</th><th class="num">NES</th><th class="num">GSEA q</th></tr></thead><tbody>${across.map(x =>
+      `<tr data-set="${esc(r.set_id)}" data-comp="${esc(x.comparison)}"><td>${esc(x.comparison)}</td><td class="num">${pv(x.ora_q)}</td><td class="num">${signed(x.nes)}</td><td class="num">${pv(x.gsea_q)}</td></tr>`).join("")}</tbody></table>` : ""}`;
+  openDrawer(info.name || r.set_id, `${info.source || r.source || ""} · ${r.set_id}${info.category ? " · " + info.category : ""}${info.set_size != null ? " · " + num(info.set_size) + " genes" : ""} · ${comp}`, html,
+    { head: gt.head, rows: gt.rows, name: `${comp}_${r.set_id}_genes.tsv` });
+}
+
+// A regulator row of findings: its full row in regulators.csv.
+async function openRegulatorOf(comp, network, regulator) {
+  await need("regulators");
+  const r = (await q(`SELECT * FROM regulators WHERE comparison = ${lit(comp)} AND network = ${lit(network)} AND regulator = ${lit(regulator)}`))[0];
+  if (r) await openRegulator(r); else openDrawer(regulator, `${network} · ${comp}`, `<p class="hint">Not found in regulators.csv.</p>`, null);
+}
+
+async function openRegulator(r) {
+  const comp = r.comparison || selectedComp();
+  const split = (s) => [...new Set(String(s || "").split(";").filter(Boolean))];
+  const cons = split(r.consistent_targets), inc = split(r.inconsistent_targets);
+  const a = await geneTable(comp, cons), b = await geneTable(comp, inc);
+  const stats = [["Network", r.network], ["Kind", r.regulator_kind], ["Targets tested", r.targets_in_universe], ["Signed targets", r.targets_signed],
+    ["Significant targets", r.significant_targets], ["Overlap p / q", `${pv(r.overlap_p)} / ${pv(r.overlap_q)}`], ["Activation z (p)", r.activation_z == null ? null : `${num(r.activation_z, 2)} (${pv(r.z_p)})`],
+    ["z, bias corrected", r.activation_z_bias_corrected == null ? null : num(r.activation_z_bias_corrected, 2)],
+    ["Activity t (p / q)", r.activity_t == null ? null : `${num(r.activity_t, 2)} (${pv(r.activity_p)} / ${pv(r.activity_q)})`],
+    ["Via transcription factors", r.via_tfs], ["Driving TFs", r.driving_tfs], ["Regulator in the data", cell(r.regulator_in_data)], ["Its own direction (p)", `${esc(r.regulator_direction || "")} ${r.regulator_p != null ? "(" + pv(r.regulator_p) + ")" : ""}`]]
+    .filter(([, v]) => v != null && v !== "" && v !== " ");
+  const html = `<dl class="kv">${stats.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${typeof v === "number" ? num(v) : v}</dd>`).join("")}</dl>
+    ${cons.length || inc.length ? `<h5>Targets that moved as its activation predicts (${cons.length})</h5>${a.html}
+    <h5>Targets that moved against it (${inc.length})</h5>${b.html}` : `<p class="hint">The evidence lists no targets for this result: targets are listed by whether they moved as the regulator's activation predicts, which needs a comparison with a direction (a contrast, or an F-test given one by its contrasts).</p>`}
+    <p class="hint">Significant signed targets only. Click a gene for all it touches.</p>`;
+  const head = ["agrees", ...a.head.length ? a.head : b.head];
+  openDrawer(r.regulator, `${r.network || ""} · ${comp}`, html, { head, rows: [...a.rows.map(x => ["consistent", ...x]), ...b.rows.map(x => ["inconsistent", ...x])], name: `${comp}_${r.regulator}_targets.tsv` });
+}
+
+async function openGene(id, sym) {
+  await need("genes"); await need("ora"); await need("gsea"); await need("regulators"); await need("crosswalk"); await need("ballots");
+  const comp = selectedComp();
+  const key = id ? `human_gene_id = ${lit(id)}` : `upper(human_symbol) = ${lit(String(sym).toUpperCase())}`;
+  const per = await q(`SELECT * FROM genes WHERE ${key} ORDER BY comparison`);
+  const g0 = per[0] || {};
+  const symbol = g0.human_symbol || sym || id;
+  const sc = statCols(tables.get("genes")).filter(c => per.some(r => r[c] != null));
+  const tok = lit(String(symbol).toUpperCase());
+  const qmax = $("f_q").value ? +$("f_q").value : 1;
+  const compW = comp ? `AND comparison = ${lit(comp)}` : "";
+  const sets = [
+    ...(tables.get("ora") ? await q(`SELECT 'ORA' AS method, comparison, direction, source, set_id, name, q FROM ora WHERE q <= ${lit(qmax)} ${compW} AND list_contains(string_split(upper(coalesce(overlap_genes, '')), ';'), ${tok})`) : []),
+    ...(tables.get("gsea") ? await q(`SELECT 'GSEA' AS method, comparison, CASE WHEN nes > 0 THEN 'up' WHEN nes < 0 THEN 'down' END AS direction, source, set_id, name, q FROM gsea WHERE q <= ${lit(qmax)} ${compW} AND list_contains(string_split(upper(coalesce(leading_edge_genes, '')), ';'), ${tok})`) : []),
+  ].sort((a, b) => a.q - b.q);
+  const regs = tables.get("regulators") ? await q(`SELECT comparison, network, regulator, overlap_q, activity_q, activation_z,
+      CASE WHEN list_contains(string_split(upper(coalesce(consistent_targets, '')), ';'), ${tok}) THEN 'agrees' ELSE 'against' END AS target
+      FROM regulators WHERE (overlap_q <= ${lit(qmax)} OR activity_q <= ${lit(qmax)}) ${compW}
+        AND list_contains(string_split(upper(coalesce(consistent_targets, '') || ';' || coalesce(inconsistent_targets, '')), ';'), ${tok}) ORDER BY overlap_q`) : [];
+  const orth = tables.get("crosswalk") && id ? await q(`SELECT * FROM crosswalk WHERE human_gene_id = ${lit(id)}`) : [];
+  const votes = tables.get("ballots") && id ? await q(`SELECT * FROM ballots WHERE human_gene_id = ${lit(id)} ${compW} ORDER BY comparison, votes DESC`) : [];
+  const html = `<h5>Statistics in each comparison</h5>
+    <table class="grid" style="font-size:12px"><thead><tr><th>Comparison</th><th>Input gene</th><th>Significant</th>${sc.map(c => `<th class="num">${esc(c.replace(/_/g, " "))}</th>`).join("")}</tr></thead><tbody>
+    ${per.map(r => `<tr><td>${esc(r.comparison)}</td><td class="mono">${esc(r.source_gene_id || "")}</td><td>${cell(r.significant)}</td>${sc.map(c => `<td class="num">${/_?(p|q)$|value$/i.test(c) ? pv(r[c]) : cell(r[c])}</td>`).join("")}</tr>`).join("")}</tbody></table>
+    <h5>Gene sets it is in (q at most ${qmax}${comp ? ", " + esc(comp) : ""}: ${sets.length})</h5>
+    ${sets.length ? `<table class="grid" style="font-size:12px"><thead><tr>${comp ? "" : "<th>Comparison</th>"}<th>Method</th><th>Direction</th><th>Source</th><th>Gene set</th><th class="num">q</th></tr></thead><tbody>${sets.map(s =>
+      `<tr data-set="${esc(s.set_id)}" data-comp="${esc(s.comparison)}" data-src="${esc(s.source)}">${comp ? "" : `<td>${esc(s.comparison)}</td>`}<td>${s.method}</td><td>${dirc(s.direction)}</td><td>${esc(s.source)}</td><td>${esc(s.name)}</td><td class="num">${pv(s.q)}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">None.</p>`}
+    <h5>Regulators it is a significant target of (${regs.length})</h5>
+    ${regs.length ? `<table class="grid" style="font-size:12px"><thead><tr>${comp ? "" : "<th>Comparison</th>"}<th>Network</th><th>Regulator</th><th>This gene</th><th class="num">Overlap q</th><th class="num">Activation z</th><th class="num">Activity q</th></tr></thead><tbody>${regs.map(s =>
+      `<tr>${comp ? "" : `<td>${esc(s.comparison)}</td>`}<td>${esc(s.network)}</td><td><b>${esc(s.regulator)}</b></td><td>${s.target === "agrees" ? "moved as predicted" : "moved against"}</td><td class="num">${pv(s.overlap_q)}</td><td class="num">${signed(s.activation_z)}</td><td class="num">${pv(s.activity_q)}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">None.</p>`}
+    ${orth.length ? `<h5>Input genes mapped to it (${orth.length})</h5><table class="grid" style="font-size:12px"><thead><tr><th>Input gene</th><th>Symbol</th><th>Homology</th><th>Type</th><th class="num">Identity %</th><th>Status</th></tr></thead><tbody>${orth.map(o =>
+      `<tr><td class="mono">${esc(o.input_gene_id)}</td><td>${esc(o.input_symbol || "")}</td><td>${esc(o.homology_source || "")}</td><td>${esc(o.homology_type || "")}</td><td class="num">${num(o.identity_pct, 1)}</td><td>${esc(o.mapping_status || "")}</td></tr>`).join("")}</tbody></table>` : ""}
+    ${votes.length ? `<h5>Collision vote${comp ? "" : "s"}</h5><table class="grid" style="font-size:12px"><thead><tr>${comp ? "" : "<th>Comparison</th>"}<th>Candidate</th><th class="num">Votes</th><th>Metrics won</th><th>Winner</th><th>Decided by</th></tr></thead><tbody>${votes.map(v =>
+      `<tr>${comp ? "" : `<td>${esc(v.comparison)}</td>`}<td class="mono">${esc(v.candidate_gene_id)}</td><td class="num">${cell(v.votes)}</td><td>${esc(v.metrics_won || "")}</td><td>${cell(v.winner)}</td><td>${esc(v.decided_by || "")}</td></tr>`).join("")}</tbody></table>` : ""}`;
+  const head = ["comparison", "input_gene_id", "significant", ...sc];
+  openDrawer(symbol, `${id || ""}${g0.human_biotype ? " · " + g0.human_biotype : ""}${g0.homology_type ? " · " + g0.homology_type : ""}`, html,
+    { head, rows: per.map(r => [r.comparison, r.source_gene_id, r.significant, ...sc.map(c => r[c])]), name: `${symbol}_statistics.tsv` });
+}
+
+// ---------------------------------------------------------------- about
+function showAbout() {
+  const m = manifest || {}, p = m.provenance || {};
+  const rows = [["Input table", p.input_table], ["Input made by", p.input_produced_by], ["Species", p.species], ["Orthology", p.orthology_reference],
+    ["Input genes", p.input_genes != null ? Number(p.input_genes).toLocaleString() : null], ["Written by", `${m.generated_by || ""} ${m.program_version || ""}`],
+    ["Format", m.schema], ["Gene-set sources", p.gene_sets && (p.gene_sets.sources_used || []).join(", ")]].filter(([, v]) => v);
+  const gl = m.glossary || {};
+  const files = (m.files || []).map(f => `<li><b>${esc(f.path)}</b>${f.rows != null ? ` (${Number(f.rows).toLocaleString()} rows)` : ""}: ${esc(f.description || "")}</li>`).join("");
+  $("view").innerHTML = `<div class="about"><h3>About this evidence</h3><p>${esc(m.about || "")}</p>
+    <table>${rows.map(([k, v]) => `<tr><td style="color:var(--muted)">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+    <h3>Reading guide</h3><ul>${(m.reading_guide || []).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+    <h3>Glossary</h3><dl class="kv">${Object.entries(gl).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <h3>Files</h3><ul>${files}</ul>
+    <p class="hint">Each file's columns are described in the manifest; the browser lists the ones that matter for reading, and Export TSV writes every column of the rows shown.</p></div>`;
+  $("count").textContent = ""; $("page").textContent = ""; $("prev").disabled = $("next").disabled = $("export").disabled = true;
+  status("");
+}
+
+function switchTab(name) {
+  tab = name;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === name));
+  if (conn) show();
+}
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+
+// ---------------------------------------------------------------- controls
+$("searchForm").onsubmit = (e) => { e.preventDefault(); if (tab === "about" || tab === "comparisons") switchTab("findings"); else show(); };
+$("apply").onclick = () => show();
+$("comp").onchange = () => show();
+$("reset").onclick = () => { $("filters").querySelectorAll("input,select").forEach(x => {
+  if (x.type === "checkbox") x.checked = x.classList.contains("f_src") || x.classList.contains("f_net") ? true : x.defaultChecked;
+  else if (x.tagName === "SELECT") { const i = [...x.options].findIndex(o => o.defaultSelected); x.selectedIndex = i < 0 ? 0 : i; }
+  else x.value = x.defaultValue; }); };
+$("prev").onclick = async () => { state.page--; await renderPage(); $("view").scrollTop = 0; };
+$("next").onclick = async () => { state.page++; await renderPage(); $("view").scrollTop = 0; };
+function downloadTSV(head, rows, name) {
+  const c = v => v == null ? "." : String(typeof v === "bigint" ? v.toString() : v).replace(/[\t\n]/g, " ");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([head.join("\t") + "\n" + rows.map(r => r.map(c).join("\t")).join("\n") + "\n"], { type: "text/tab-separated-values" }));
+  a.download = name.replace(/[^A-Za-z0-9._-]+/g, "_");
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$("export").onclick = async () => {
+  const limit = 1000000;
+  status("Exporting…");
+  const rows = await q(`SELECT * ${state.sql} ORDER BY ${state.order} ${state.dir} NULLS LAST LIMIT ${limit}`);
+  if (!rows.length) return;
+  const head = Object.keys(rows[0]);
+  downloadTSV(head, rows.map(r => head.map(h => r[h])), `${state.tab}_${selectedComp() || "all"}${$("q").value.trim() ? "_" + $("q").value.trim() : ""}.tsv`);
+  status(`Exported ${rows.length.toLocaleString()} rows${rows.length === limit ? " (first million)" : ""}`);
+};
+</script>
+</body>
+</html>

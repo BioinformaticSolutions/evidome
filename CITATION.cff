@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Evidome: cross-species functional evidence reports for pathway and upstream-regulator analysis"
+license: AGPL-3.0-only
+repository-code: "https://github.com/BioinformaticSolutions/evidome"
+authors:
+  - family-names: Jones
+    given-names: Kenneth L.
+    orcid: "https://orcid.org/0009-0000-1289-4652"
+    email: Ken.Jones@bioinformaticsolutions.com
+abstract: >-
+  Evidome turns a gene-level differential expression result from any species
+  into a structured, self-describing functional evidence report: gene-set
+  enrichment (Reactome, Gene Ontology, WikiPathways, MSigDB Hallmark; ORA and
+  preranked GSEA) and upstream-regulator evidence (CollecTRI and OmniPath),
+  with every gene -- given as an Ensembl ID, an NCBI GeneID or a symbol --
+  mapped to its human ortholog through Ensembl Compara. The
+  report is written for an AI agent to read and interpret, with a browser
+  page and a workbook for people.
+keywords:
+  - pathway analysis
+  - gene set enrichment
+  - upstream regulator
+  - orthology
+  - differential expression
+
+# No version here: Zenodo takes the version from the release's git tag (v1.0),
+# so this file never states a stale one. Once Zenodo has archived the first
+# release, its concept DOI (which always resolves to the newest version) goes
+# here under identifiers.

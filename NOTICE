@@ -1,0 +1,85 @@
+Evidome
+Copyright (C) 2026 Kenneth L. Jones
+ORCID: https://orcid.org/0009-0000-1289-4652
+
+Kenneth L. Jones is the sole author and sole copyright holder of this software.
+Copyright is held by him personally and not by Bioinformatic Solutions, LLC.
+
+DUAL LICENSED
+=============
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License, version 3, as published by
+the Free Software Foundation. See the LICENSE file for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+The AGPL permits use, study, modification and redistribution, including for
+research. It requires that any modified version which is distributed -- or made
+available to others over a network -- be released in full under the same
+licence.
+
+Alternatively, a separate commercial licence is available for uses that the
+AGPL's conditions do not suit, including incorporating Evidome into a product
+or service without releasing the corresponding source. Contact:
+
+    Kenneth L. Jones
+    Ken.Jones@bioinformaticsolutions.com
+
+THIRD-PARTY COMPONENTS
+======================
+
+Evidome requires two Python packages, which pip installs with it. Neither is
+distributed with Evidome.
+
+- matplotlib (https://matplotlib.org), under the Matplotlib License
+  (PSF-based, BSD-compatible). It draws the figures.
+- scikit-learn (https://scikit-learn.org), under the BSD 3-Clause License.
+  It fits the database-value model, and brings NumPy (https://numpy.org) and
+  SciPy (https://scipy.org), each under the BSD 3-Clause License.
+
+The evidence browser page (Evidome_Viewer_v<version>.html) loads DuckDB-WASM
+(https://github.com/duckdb/duckdb-wasm), under the MIT License, from the
+jsDelivr CDN (https://cdn.jsdelivr.net) when it is opened. DuckDB-WASM is not
+distributed with Evidome. The page reads the evidence files inside the browser
+and sends none of them anywhere.
+
+REFERENCE DATA
+==============
+
+Evidome downloads reference data at run time; none of it is distributed with
+this software. It comes from:
+
+- Ensembl (https://www.ensembl.org), whose data are available without
+  restriction on use; see Ensembl's own terms.
+- NCBI Gene (https://www.ncbi.nlm.nih.gov/gene), files gene2ensembl and
+  gene_orthologs. NCBI places no restrictions on the use or distribution of
+  these data, but notes that submitters of original data may claim rights in
+  them; see NCBI's "Website and Data Usage Policies and Disclaimers".
+- Gene sets used for enrichment:
+  - Reactome (https://reactome.org): data files under CC0 1.0.
+  - Gene Ontology (http://geneontology.org), annotations as distributed in
+    NCBI Gene's gene2go: CC BY 4.0. Attribution: the Gene Ontology Consortium.
+  - WikiPathways (https://www.wikipathways.org): CC0 1.0.
+  - MSigDB Hallmark gene sets (https://www.gsea-msigdb.org): CC BY 4.0,
+    copyright Broad Institute, Inc., Massachusetts Institute of Technology and
+    Regents of the University of California. Attribution: Liberzon A. et al.
+    (2015) The Molecular Signatures Database Hallmark Gene Set Collection.
+    Cell Systems 1:417-425. Other MSigDB collections (KEGG, BioCarta) carry
+    other terms and are not used.
+- Upstream-regulator networks: the OmniPath web service (https://omnipathdb.org),
+  queried with license=commercial, so that only records supported by
+  resources whose licences allow for-profit use are returned (OmniPath's own
+  per-resource licence tracking). Datasets: CollecTRI transcription-factor
+  regulons (Mueller-Dott S. et al. (2023) Nucleic Acids Research 51:10934) and
+  OmniPath's curated signalling network (Tuerei D. et al., OmniPath).
+
+Any further knowledge source added later (pathway, regulator, miRNA, drug
+databases) is recorded here with its licence before it is used, because a
+licence that is free for academic use is not necessarily free for commercial
+use.
+
+Evidome runs Paralome, when installed, as a separate program (to ask where
+its shared locations are). Paralome is not distributed with Evidome.
