@@ -4,6 +4,10 @@ type: software
 title: "Evidome: cross-species functional evidence reports for pathway and upstream-regulator analysis"
 license: AGPL-3.0-only
 repository-code: "https://github.com/BioinformaticSolutions/evidome"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23459120
+    description: "Archived releases, all versions"
 authors:
   - family-names: Jones
     given-names: Kenneth L.
@@ -25,7 +29,6 @@ keywords:
   - orthology
   - differential expression
 
-# No version here: Zenodo takes the version from the release's git tag (v1.0),
-# so this file never states a stale one. Once Zenodo has archived the first
-# release, its concept DOI (which always resolves to the newest version) goes
-# here under identifiers.
+# No version here: Zenodo takes the version from the release's git tag, so
+# this file never states a stale one. The DOI above is the concept DOI, which
+# always resolves to the newest archived version.
