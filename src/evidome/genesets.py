@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from .errors import ProjectError
+from .reference import shared_writes
 
 REACTOME_BASE = "https://reactome.org/download/current"
 GO_OBO_URL = "https://current.geneontology.org/ontology/go-basic.obo"
@@ -283,10 +284,14 @@ def wikipathways_file(directory_url: str, local_dir: Optional[Path] = None) -> s
     return sorted(names)[-1]
 
 
-def fetch_genesets(reference_dir: Path, *, release: int = 116, msigdb_release: str = DEFAULT_MSIGDB_RELEASE,
+@shared_writes
+def fetch_genesets(reference_dir: Path, *, release=None, msigdb_release: str = DEFAULT_MSIGDB_RELEASE,
                    refresh: bool = False, threads: Optional[int] = None, urls: Optional[Dict[str, str]] = None,
                    log=print) -> Path:
     """Download, map to this release's human Ensembl genes, and index every source. Returns genesets.json."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from .jsonio import write_json
     from .parallel import MAX_DOWNLOADS, map_ordered, resolve_threads
     from .reference import (_download_ncbi, ensure_writable, load_manifest, ncbi_base_url, release_dir,
@@ -392,9 +397,12 @@ def fetch_genesets(reference_dir: Path, *, release: int = 116, msigdb_release: s
     return path
 
 
-def load_gene_sets(reference_dir: Path, release: int = 116,
+def load_gene_sets(reference_dir: Path, release=None,
                    sources: Optional[Iterable[str]] = None) -> Tuple[Dict[str, Dict[str, object]], Dict[str, List[str]]]:
     """({set_id: info}, {set_id: sorted human gene IDs}) from the index; EVD-0019 if absent."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     out = genesets_dir(reference_dir, release)
     if not (out / "gene_sets.tsv").exists():
         raise ProjectError(19, f"no gene-set index at {out}")

@@ -231,12 +231,15 @@ def _ncbi_species(ids: Sequence[str], g2e: Path) -> Tuple[str, int, int]:
 # the translation
 # ---------------------------------------------------------------------------
 
-def translate_ids(gene_ids: Sequence[str], raw_ids: Sequence[str], reference_dir: Path, *, release: int = 116,
+def translate_ids(gene_ids: Sequence[str], raw_ids: Sequence[str], reference_dir: Path, *, release=None,
                   species: Optional[str] = None, fetch_species: bool = True, threads: Optional[int] = None,
                   log=print) -> Tuple[Translation, List[str]]:
     """(the translation, the IDs the rest of the run uses -- one per input gene, in order).
 
     ``gene_ids`` are the table's IDs (Ensembl version suffixes stripped), ``raw_ids`` the same as written."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     species = normalise_species(species) if species else None
     kind = id_kind(gene_ids)
     if kind == KIND_SYMBOL and species and _downloaded(reference_dir, release, species):

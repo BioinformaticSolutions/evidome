@@ -63,6 +63,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from xml.etree.ElementTree import iterparse
 
 from .errors import ProjectError
+from .reference import shared_writes
 
 REACTOME_BIOPAX = "https://reactome.org/download/current/biopax.zip"
 SIGNS_COLUMNS = ("set_id", "human_gene_id", "sign")
@@ -327,9 +328,13 @@ def build_signs(biopax: Path, uniprot_tsv: Path, human: Set[str], reactome_sets:
     return rows, dict(counts)
 
 
-def fetch_pathway_signs(reference_dir: Path, *, release: int = 116, refresh: bool = False,
+@shared_writes
+def fetch_pathway_signs(reference_dir: Path, *, release=None, refresh: bool = False,
                         urls: Optional[Dict[str, str]] = None, log=print) -> Path:
     """Download Reactome BioPAX and Ensembl's UniProt table, build pathway_signs.tsv. Needs `reference genesets`."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from .genesets import genesets_dir
     from .jsonio import write_json
     from .reference import DEFAULT_BASE_URL, _download_ncbi, ensure_writable, human_genes_path, release_dir

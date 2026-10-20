@@ -153,7 +153,8 @@ register(
     11,
     "Checksum mismatch or unverifiable download",
     "The downloaded file does not match the directory's MD5SUM/CHECKSUMS, or neither "
-    "lists it. Delete the file under raw/ and re-run the fetch. Unverified files are never used.",
+    "lists it, or (in a directory that publishes neither) it is not a complete, valid gzip file. "
+    "Delete the file under raw/ and re-run the fetch. Unverified files are never used.",
 )
 register(
     12,
@@ -165,10 +166,11 @@ register(
     13,
     "No reference data",
     "If the message says where it looked and found nothing, run 'reference fetch "
-    "--species <ensembl_species_name>' first. If it says there is no reference directory "
-    "at all: on a Paralome machine an administrator runs 'paralome setup site' (the "
-    "reference data then lives beside Paralome's genomes); otherwise set the "
-    f"{env_var('REFERENCE')} environment variable or pass --reference-dir.",
+    "--species <ensembl_species_name>' first. If it says there is no reference directory: "
+    "give --reference-dir with the directory that holds the reference data, or the one they "
+    "should be built in (a standalone install remembers it for later runs), and for a run "
+    "--gtf with the annotation the data were counted against. With Paralome set up on the "
+    "machine, the reference data live beside Paralome's genomes and nothing needs giving.",
 )
 register(
     14,
@@ -183,7 +185,10 @@ register(
     "Reference directory cannot be created or written",
     f"Point --reference-dir (or the {env_var('REFERENCE')} environment variable) at a directory you "
     "can write to -- ideally on a filesystem every node sees, since later stages read "
-    "it from compute nodes. Its parent must exist or be creatable by you.",
+    "it from compute nodes. Its parent must exist or be creatable by you. A shared "
+    "reference belongs to a group: the message says whether this account is outside it "
+    "(an administrator adds it, and the account logs in again) or the folder is not "
+    "group-writable (its owner runs the chmod named).",
 )
 register(
     16,
@@ -301,4 +306,42 @@ register(
     "Gene symbols do not say which species they belong to (macaque and human symbols are nearly the same). "
     "Name the species with --species, as Ensembl names it, e.g. --species macaca_mulatta, --species "
     "mus_musculus or --species homo_sapiens. Ensembl gene IDs and NCBI GeneIDs need no --species.",
+)
+register(
+    33,
+    "Genome name already registered",
+    "Every registered genome has one name on the machine. Choose another name, or have the account that "
+    "registered it remove it first ('reference genome list' shows who did).",
+)
+register(
+    34,
+    "Not your genome to remove",
+    "A registered genome can be removed only by the account that registered it ('reference genome list' "
+    "shows who did); anyone may register one.",
+)
+register(
+    35,
+    "Unusable genome annotation",
+    "Give the genome's annotation as a GTF (plain or gzip-compressed) that this account can read and that "
+    "has gene lines with gene_id attributes -- the annotation the data were aligned and counted against.",
+)
+register(
+    36,
+    "Ensembl release of the annotation not known",
+    "The input is identified by a registered genome, and its orthologs come from the Ensembl release of that "
+    "genome's annotation, which is read from the GTF's file name (Species.Assembly.<release>.gtf, as Ensembl "
+    "publishes it). Register the annotation under the file name Ensembl gave it, so the release can be read.",
+)
+register(
+    37,
+    "No orthologs to human for this annotation",
+    "The registered genome's annotation is a dataset of Ensembl's new platform, and neither its homology file "
+    "nor human's holds a row between it and human (the message names the dataset). Nothing is guessed from "
+    "another release; check the dataset on the platform's FTP site.",
+)
+register(
+    38,
+    "The workbook is retired",
+    "Leave out --workbook: the report writes no workbook. The evidence zip holds every table as CSV, "
+    "and OmicView's Evidence Browser opens it.",
 )

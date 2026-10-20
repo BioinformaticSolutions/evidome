@@ -1,4 +1,4 @@
-"""The evidence bundle: every file indexed, every column described, a zip and a workbook."""
+"""The evidence bundle: every file indexed, every column described, and a zip (no workbook)."""
 
 import csv
 import json
@@ -10,7 +10,7 @@ from evidome.cli import main
 from evidome.errors import ProjectError
 from evidome.genesets import fetch_genesets
 from evidome.regulators import fetch_regulators
-from evidome.report import COLUMN_TEXT, FILES, build_report, viewer_name, viewer_page
+from evidome.report import COLUMN_TEXT, FILES, OPEN_WITH, build_report
 
 from test_gene_sets_are_indexed_to_human_ensembl import sources  # noqa: F401  (fixture)
 from test_reference_and_crosswalk import M
@@ -104,40 +104,40 @@ def test_findings_are_exactly_the_q_below_threshold_rows_ranked(run):
 def test_the_zip_holds_the_folder(run):
     paths = build_report(run, log=lambda *_: None)
     names = zipfile.ZipFile(paths["archive"]).namelist()
-    assert paths["archive"].name == "liver_combined_results.zip"            # named after the --out folder
-    assert sorted(names) == sorted(f"liver_combined_results/{n}" for n in ["manifest.json", viewer_name()] + list(FILES))
+    assert paths["archive"].name == "liver_evidome_output.zip"            # named after the --out folder
+    assert sorted(names) == sorted(f"liver_evidome_output/{n}" for n in ["manifest.json"] + list(FILES))
 
 
-def test_the_zip_carries_the_evidence_browser(run):
-    """The page is in the zip, named and stamped with the program and version that wrote it
-    (<Name>_Viewer_v<version>.html), and the manifest says what it is."""
-    from evidome.identity import DISPLAY_NAME
-    from evidome.version import __version__
+def test_the_zip_carries_no_page_and_the_manifest_names_the_browser(run):
+    """No web page travels in the zip; the manifest says what a person opens it with, and that it is not
+    evidence."""
+    from importlib.resources import files
 
     paths = build_report(run, log=lambda *_: None)
-    assert viewer_name() == f"{DISPLAY_NAME}_Viewer_v{__version__}.html"
-    page = zipfile.ZipFile(paths["archive"]).read(f"liver_combined_results/{viewer_name()}")
-    assert page == viewer_page() and page.startswith(b"<!doctype html>")
-    assert f'<meta name="written-by" content="{DISPLAY_NAME} {__version__}">'.encode() in page
-    assert b"manifest.json" in page and b"comparisons.csv" in page            # it opens this bundle's files
+    assert not [n for n in zipfile.ZipFile(paths["archive"]).namelist() if n.endswith(".html")]
     manifest = json.loads(paths["manifest"].read_text())
-    assert manifest["viewer"]["path"] == viewer_name() and "not evidence" in manifest["viewer"]["description"]
+    assert "viewer" not in manifest and manifest["open_with"] == OPEN_WITH
+    assert "OmicView" in OPEN_WITH["program"] and "not evidence" in OPEN_WITH["description"]
+    assert not (files("evidome") / "web").is_dir() or not list((files("evidome") / "web").iterdir())
 
 
-def test_the_workbook_opens_with_its_sheets_and_numbers(run):
-    openpyxl = pytest.importorskip("openpyxl")   # test-only reader: the program itself never imports it
+def test_no_workbook_is_written_and_an_old_one_is_removed(run):
+    """No workbook -- OmicView's Evidence Browser opens the zip."""
+    from evidome.report import former_workbook_name
+
+    old = run / former_workbook_name(run.name)
+    old.write_bytes(b"a workbook from 1.1")
     paths = build_report(run, log=lambda *_: None)
-    wb = openpyxl.load_workbook(paths["workbook"], read_only=True)
-    assert wb.sheetnames == ["README", "Comparisons", "Findings q<0.05", "ORA p<0.05", "GSEA p<0.05",
-                             "Regulators p<0.05", "Human genes", "Crosswalk", "Collisions"]
-    rows = list(wb["Human genes"].iter_rows(values_only=True))
-    header = list(rows[0])
-    tspan = [r for r in rows[1:] if r[header.index("human_symbol")] == "TSPAN6" and r[0] == "A"][0]
-    assert tspan[header.index("P-value")] == 0.001                       # a number, not text
-    ora = list(wb["ORA p<0.05"].iter_rows(values_only=True))
-    assert all(r[list(ora[0]).index("p")] < 0.05 for r in ora[1:])
-    readme = [r[0] for r in wb["README"].iter_rows(values_only=True) if r and r[0]]
-    assert any("Reading guide" == line for line in readme)
+    assert set(paths) == {"evidence", "manifest", "archive"} and paths["archive"].is_file()
+    assert not old.exists() and not list(run.glob("*.xlsx"))
+
+
+def test_report_workbook_is_refused_by_name(run, capsys):
+    from evidome.cli import main
+
+    assert main(["report", str(run), "--workbook", str(run / "book.xlsx")]) != 0
+    assert "EVD-0038" in capsys.readouterr().err
+    assert not (run / "book.xlsx").exists()
 
 
 def test_a_crosswalk_without_enrichment_still_reports_and_says_so(run):
@@ -177,3 +177,32 @@ def test_regulators_reach_the_bundle(run):
     manifest = json.loads(paths["manifest"].read_text())
     assert "license=commercial" in manifest["provenance"]["regulator_data"]["files"]["collectri"]["url"] or \
         manifest["provenance"]["regulator_data"]["licence"].startswith("OmniPath")
+
+
+def test_the_members_behind_each_set_and_regulator_are_in_the_bundle(run):
+    """A viewer can show a set's or regulator's whole membership, not only the genes of its evidence. The
+    members of every set tested and the signed targets of every regulator tested, among the human genes the run
+    reached, are in the bundle."""
+    paths = build_report(run, log=lambda *_: None)
+    ev = paths["evidence"]
+    reached = {r["human_gene_id"] for r in csv.DictReader((ev / "human_gene_statistics.csv").open())}
+    tested = {r["set_id"] for name in ("enrichment_ora.csv", "enrichment_gsea.csv")
+              for r in csv.DictReader((ev / name).open())}
+    members = list(csv.DictReader((ev / "gene_set_members.csv").open()))
+    assert members and {m["set_id"] for m in members} <= tested and {m["human_gene_id"] for m in members} <= reached
+    sizes = {r["set_id"]: int(r["n_genes"]) for r in csv.DictReader((ev / "gene_sets.csv").open())}
+    for sid in {m["set_id"] for m in members}:
+        assert sum(m["set_id"] == sid for m in members) <= sizes[sid]
+    regs = {(r["network"], r["regulator"]) for r in csv.DictReader((ev / "regulators.csv").open())}
+    targets = list(csv.DictReader((ev / "regulator_targets.csv").open()))
+    assert targets and {(t["network"], t["regulator"]) for t in targets} <= regs
+    assert {t["target_human_gene_id"] for t in targets} <= reached and {t["sign"] for t in targets} <= {"1", "-1", "0"}
+    # every consistent or inconsistent target named in regulators.csv is among the targets listed
+    sym = {r["human_symbol"]: r["human_gene_id"] for r in csv.DictReader((ev / "human_gene_statistics.csv").open())}
+    for r in csv.DictReader((ev / "regulators.csv").open()):
+        listed = {t["target_human_gene_id"] for t in targets if (t["network"], t["regulator"]) == (r["network"], r["regulator"])}
+        for s in filter(None, (r["consistent_targets"] + ";" + r["inconsistent_targets"]).split(";")):
+            assert sym[s] in listed
+    with zipfile.ZipFile(paths["archive"]) as z:
+        names = {n.split("/", 1)[1] for n in z.namelist()}
+    assert {"gene_set_members.csv", "regulator_targets.csv"} <= names

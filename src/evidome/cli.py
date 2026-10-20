@@ -21,6 +21,7 @@ from typing import List, Optional
 from . import version as _version_module
 from .identity import DISPLAY_NAME, NAME, env_var
 from .version import __version__
+from .report import results_stem
 
 
 def version_report() -> List[str]:
@@ -155,10 +156,25 @@ def build_parser() -> argparse.ArgumentParser:
     signs.add_argument("--refresh", action="store_true", help="download again (by default the copies are kept)")
     _reference_options(signs, threads=False)
 
+    genome = ref_sub.add_parser("genome", help="register the genome annotations your data were counted against "
+                                "(the identity of the input, before Ensembl's); needed only without Paralome, "
+                                "whose registered genomes are read as they are")
+    genome_sub = genome.add_subparsers(dest="genome_command")
+    g_add = genome_sub.add_parser("add", help="register a genome: a name and its GTF (anyone may register one)")
+    g_add.add_argument("name", help="the genome's name, e.g. Macaca_mulatta_10.e113")
+    g_add.add_argument("--gtf", type=Path, required=True, help="the annotation the data were counted against")
+    g_add.add_argument("--reference-dir", type=Path, default=None, help="reference data directory")
+    g_list = genome_sub.add_parser("list", help="every registered genome, here and in Paralome's registry")
+    g_list.add_argument("--reference-dir", type=Path, default=None, help="reference data directory")
+    g_rm = genome_sub.add_parser("remove", help="remove a genome you registered (only its registrant can)")
+    g_rm.add_argument("name")
+    g_rm.add_argument("--reference-dir", type=Path, default=None, help="reference data directory")
+
     species = ref_sub.add_parser("species", help="list the species names --species accepts, with their assemblies")
     species.add_argument("text", nargs="?", help="filter: common name, species name, assembly or accession (e.g. sheep, Ramb)")
     species.add_argument("--all", action="store_true", help="also list genomes without orthology (they cannot be fetched)")
-    species.add_argument("--release", type=int, default=116)
+    species.add_argument("--release", type=int, default=None,
+                         help="Ensembl release (default: the newest Ensembl publishes)")
     species.add_argument("--base-url", default=None, help="mirror of https://ftp.ensembl.org/pub (testing)")
 
     crosswalk = sub.add_parser("crosswalk", help="identify the species of an input table and map every gene to human")
@@ -209,12 +225,11 @@ def build_parser() -> argparse.ArgumentParser:
     _backend_options(run)
     _reference_options(run)
 
-    report = sub.add_parser("report", help="write the evidence bundle (CSV + manifest + zip) and a tabbed workbook "
-                                           "for a crosswalk folder")
+    report = sub.add_parser("report", help="write the evidence bundle (CSV + manifest + zip) for a crosswalk folder")
     report.add_argument("crosswalk_dir", type=Path, help="the --out directory of a crosswalk run (after enrich)")
     report.add_argument("--out", type=Path, default=None, help="evidence folder (default <crosswalk_dir>/evidence)")
-    report.add_argument("--workbook", type=Path, default=None,
-                        help="workbook path (default <crosswalk_dir>/<name>_workbook.xlsx)")
+    # 1.1: no workbook; the option is refused by name (EVD-0038) rather than ignored
+    report.add_argument("--workbook", type=Path, default=None, help=argparse.SUPPRESS)
 
     figures = sub.add_parser("figures", help="draw the top-25 mirrored bar charts (regulators, pathways) for a "
                                              "crosswalk folder again, e.g. in other colours")
@@ -307,6 +322,11 @@ def _crosswalk_options(parser: argparse.ArgumentParser) -> None:
                              "which species the IDs belong to and it is fetched once, as 'reference fetch' would)")
     parser.add_argument("--no-registry", action="store_true",
                         help="identify against Ensembl's annotation only, ignoring the machine's genome registry")
+    parser.add_argument("--gtf", type=Path, default=None,
+                        help="the annotation the data were counted against (an Ensembl GTF, under the name Ensembl "
+                             "gave it, or a new-platform genes.gtf.gz): it identifies the input, and its own Ensembl "
+                             "release supplies the orthologs; no registry is read. Its index is built in the "
+                             "reference directory")
 
 
 def _enrich_options(parser: argparse.ArgumentParser) -> None:
@@ -388,9 +408,9 @@ def _figure_settings(args):
                           pathway_score=getattr(args, "pathway_score", "activation"))
 
 
-def _backend_options(parser: argparse.ArgumentParser, *, cpus: int = 40, mem: str = "4G") -> None:
+def _backend_options(parser: argparse.ArgumentParser, *, cpus: int = 16, mem: str = "4G") -> None:
     """Defaults per command: database-value's are 16 CPUs and 32G. They are set here, at parsing, so its --help
-    shows them and an explicit --cpus-per-task 40 or --mem 4G is never silently replaced."""
+    shows them and an explicit --cpus-per-task 16 or --mem 4G is never silently replaced."""
     parser.add_argument("--backend", choices=("local", "slurm"), default="local",
                         help="local: run here with --threads; slurm: one array task per comparison, then a "
                              "finalize job (default local)")
@@ -454,7 +474,10 @@ def _reference_options(parser: argparse.ArgumentParser, *, threads: bool = True)
     parser.add_argument("--reference-dir", type=Path, default=None,
                         help="reference data directory (default: <machine shared root>/"
                              f"{NAME}, else ${env_var('REFERENCE')})")
-    parser.add_argument("--release", type=int, default=116, help="Ensembl release (default 116)")
+    parser.add_argument("--release", type=int, default=None,
+                        help="Ensembl release of the human-side reference (default: the newest release in the "
+                             "reference directory, else the newest Ensembl publishes). An input counted against a "
+                             "registered genome takes its orthologs from that genome's own release")
     if not threads:     # pathway-signs is one sequential parse; it takes no --threads
         return
     parser.add_argument("--threads", type=int, default=0,
@@ -489,6 +512,48 @@ def _require_indexes(reference_dir: Path, release: int) -> None:
         raise ProjectError(25, f"no regulator index at {regulators_dir(reference_dir, release)}")
 
 
+def _ensure_reference(reference_dir: Path, args, log) -> None:
+    """The one-command run builds what the reference directory lacks, then checks it (1.1).
+
+    A run that finds no index makes it, through Paralome or standalone alike: an empty reference directory gets
+    the human genes, gene sets, regulators and pathway signs of the newest Ensembl release, in the order
+    'reference fetch', 'genesets', 'regulators', 'pathway-signs' would, once; later runs reuse them. Each step
+    already present is skipped; pathway signs, optional to a run, are built only with gene sets built here. --no-fetch-species keeps the run offline: nothing is fetched, and what is missing
+    is reported as before."""
+    from .genesets import genesets_dir
+    from .reference import fetch, release_dir
+    from .regulators import regulators_dir
+    from .releases import UNFETCHED, human_release
+
+    release = human_release(reference_dir, args.release)
+    have = lambda rel: (rel != UNFETCHED  # noqa: E731
+                        and (genesets_dir(reference_dir, rel) / "gene_sets.tsv").exists()
+                        and (regulators_dir(reference_dir, rel) / "regulons.tsv").exists())
+    if have(release) or args.no_fetch_species:
+        _require_indexes(reference_dir, release)
+        return
+    if release == UNFETCHED:
+        release = human_release(reference_dir, args.release, offline=False)
+    log(f"reference data: building what {reference_dir} lacks for Ensembl {release} (once; later runs reuse it)")
+    if not (release_dir(reference_dir, release) / "human_genes.tsv").exists():
+        fetch(reference_dir, [], release=release, threads=args.threads, log=log)
+    built_sets = not (genesets_dir(reference_dir, release) / "gene_sets.tsv").exists()
+    if built_sets:
+        from .genesets import fetch_genesets
+
+        fetch_genesets(reference_dir, release=release, threads=args.threads, log=log)
+    if not (regulators_dir(reference_dir, release) / "regulons.tsv").exists():
+        from .regulators import fetch_regulators
+
+        fetch_regulators(reference_dir, release=release, threads=args.threads, log=log)
+    # pathway signs are optional to a run; they are built with gene sets built here, never required
+    if built_sets and not (genesets_dir(reference_dir, release) / "pathway_signs.json").exists():
+        from .pathway_signs import fetch_pathway_signs
+
+        fetch_pathway_signs(reference_dir, release=release, log=log)
+    _require_indexes(reference_dir, release)
+
+
 def run_crosswalk(args, reference_dir: Optional[Path] = None) -> List[str]:
     from .crosswalk import build_crosswalk, summarize, write_crosswalk
     from .human_tables import build_human_tables, summary_lines, write_human_tables
@@ -511,6 +576,13 @@ def run_crosswalk(args, reference_dir: Optional[Path] = None) -> List[str]:
     skipped = [] if args.keep_duplicate_ftests else drop_duplicate_ftests(table)
     reference_dir = reference_dir or _reference_dir(args)
     from .gene_ids import KIND_SYMBOL, normalise_species, translate_ids
+    from .releases import human_release
+
+    # 1.1: no release is fixed in the code. The human release is the reference's own; the orthology
+    # release is the registered genome's (decided in build_crosswalk).
+    # Read from what is on disk; when the reference holds no release yet, the steps that download decide it.
+    explicit_release = args.release
+    args.release = human_release(reference_dir, explicit_release)
 
     # Symbols and NCBI GeneIDs become the species' Ensembl genes here; Ensembl IDs pass through unchanged
     translation, gene_ids = translate_ids(table.gene_ids, table.input_gene_ids, reference_dir, release=args.release,
@@ -520,19 +592,28 @@ def run_crosswalk(args, reference_dir: Optional[Path] = None) -> List[str]:
     if translation.kind == KIND_SYMBOL:      # the given symbol is the gene's symbol, where the table had no other
         symbols = [s or g for s, g in zip(symbols, table.gene_ids)]
     table.gene_ids, table.symbols = gene_ids, symbols
-    if not translation.translated and not args.no_fetch_species:
-        from .crosswalk import ensure_species
+    if not translation.translated:
+        from .crosswalk import ensure_genome_species, ensure_species
 
-        # the loosest threshold the crosswalk itself would accept: a table it can map never triggers a download
-        ensure_species(table.gene_ids, reference_dir, release=args.release,
-                       min_fraction=min(args.min_species_match, args.min_ensembl_match),
-                       threads=args.threads, log=lambda line: print(line, file=sys.stderr))
+        log = lambda line: print(line, file=sys.stderr)  # noqa: E731
+        # 1.1: the registry first. A registered genome that holds the input names its species and its
+        # Ensembl release, and that release's data are fetched; Ensembl's current release is asked only when no
+        # registered genome holds the input.
+        genome = None if args.no_registry and args.gtf is None else ensure_genome_species(
+            table.gene_ids, reference_dir, human_rel=args.release, min_fraction=args.min_species_match,
+            threads=args.threads, fetch_species=not args.no_fetch_species, gtf=args.gtf, log=log)
+        if genome is None and not args.no_fetch_species:
+            # the loosest threshold the crosswalk itself would accept: a table it can map never triggers a download
+            ensure_species(table.gene_ids, reference_dir, release=explicit_release,
+                           min_fraction=min(args.min_species_match, args.min_ensembl_match),
+                           threads=args.threads, log=log)
+        args.release = human_release(reference_dir, explicit_release)
     call, rows = build_crosswalk(table.gene_ids, table.symbols, reference_dir,
                                  release=args.release, min_fraction=args.min_species_match,
                                  min_ensembl_fraction=args.min_ensembl_match,
                                  use_registry=not args.no_registry, threads=args.threads,
                                  use_ncbi=not args.no_ncbi, use_symbols=not args.no_symbol_match,
-                                 translation=translation)
+                                 translation=translation, gtf=args.gtf)
     if args.species and normalise_species(args.species) != call.species:
         raise ProjectError(14, f"--species {args.species}, but the gene IDs are {call.species}'s "
                                f"({call.matched}/{call.total})")
@@ -541,7 +622,8 @@ def run_crosswalk(args, reference_dir: Optional[Path] = None) -> List[str]:
     summary["input_ids"] = translation.summary()
     summary.update({"input_table": str(Path(table_path).resolve()), "input_produced_by": table.generator,
                     **({"input_folder": str(Path(folder).resolve())} if folder else {}),
-                    "reference": f"Ensembl {args.release} Compara"})
+                    "reference": f"Ensembl {call.orthology_release} Compara",
+                    "orthology_release": call.orthology_release, "human_release": call.human_release})
     json_path = write_json(args.out / "ortholog_crosswalk.json", summary)
     results = build_human_tables(table, rows, alpha=args.alpha, threads=args.threads)
     table_paths = write_human_tables(results, table, args.out)
@@ -572,7 +654,10 @@ def run_crosswalk(args, reference_dir: Optional[Path] = None) -> List[str]:
                      f"{ids['translated']} of {call.total}")
         for reason, n in ids["untranslated_by_reason"].items():
             lines.append(f"  {reason:<60} {n:>6}")
-    lines.append(f"Ensembl species  {call.species}  ({call.matched}/{call.total} IDs in Ensembl {args.release}, "
+    if str(call.orthology_release) != str(call.human_release):
+        lines.append(f"Ensembl releases orthologs from {call.orthology_release} (the registered genome's), "
+                     f"human genes at {call.human_release}")
+    lines.append(f"Ensembl species  {call.species}  ({call.matched}/{call.total} IDs in Ensembl {call.orthology_release}, "
                  f"{call.fraction:.1%})")
     for status, n in summary["input_genes_by_status"].items():
         lines.append(f"  {status:<34} {n:>6}")
@@ -694,6 +779,27 @@ def main(argv: Optional[List[str]] = None) -> int:
                                   refresh=args.refresh, threads=args.threads)
             print(f"gene-set manifest: {path}")
             return 0
+        if args.command == "reference" and args.reference_command == "genome":
+            from .genomes import add_genome, genome_rows, remove_genome
+
+            if args.genome_command == "add":
+                path = add_genome(_reference_dir(args), args.name, args.gtf)
+                print(f"registered {args.name} in {path}")
+            elif args.genome_command == "remove":
+                path = remove_genome(_reference_dir(args), args.name)
+                print(f"removed {args.name} from {path}")
+            elif args.genome_command == "list":
+                rows = genome_rows(_reference_dir(args))
+                print(f"{'genome':<36} {'registered by':<16} {'registry':<26} gtf")
+                for r in rows:
+                    flag = "  (withdrawn)" if r["withdrawn"] else ""
+                    print(f"{r['name']:<36} {r['registered_by']:<16} {r['source']:<26} {r['gtf']}{flag}")
+                if not rows:
+                    print("(no genome registered)")
+            else:
+                print("usage: reference genome {add,list,remove} -- see --help", file=sys.stderr)
+                return 2
+            return 0
         if args.command == "reference" and args.reference_command == "species":
             from .reference import DEFAULT_BASE_URL, list_species
 
@@ -707,7 +813,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("(no species with orthology matched)")
             if hidden:
                 print(f"{hidden} more genome(s) matched but have no Compara orthology and cannot be fetched; --all shows them")
-            print(f"Ensembl release {args.release}. Pick the row whose assembly matches the annotation your data "
+            print(f"Ensembl release {args.release or 'newest'}. Pick the row whose assembly matches the annotation your data "
                   f"was aligned to; crosswalk checks the choice against your gene IDs.")
             return 0
         if args.command == "enrich":
@@ -753,8 +859,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.command == "report":
             from .report import build_report
 
-            paths = build_report(args.crosswalk_dir, out=args.out, workbook=args.workbook)
-            for key in ("evidence", "archive", "workbook"):
+            if args.workbook is not None:
+                raise ProjectError(38, "--workbook: the report writes no workbook; OmicView's Evidence "
+                                       "Browser opens the evidence zip")
+            paths = build_report(args.crosswalk_dir, out=args.out)
+            for key in ("evidence", "archive"):
                 print(f"wrote {paths[key]}")
             return 0
         if args.command in ("database-value", "database-value-task"):
@@ -823,8 +932,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             settings = _settings(args)
             _check_targets(args)
             reference = _reference_dir(args)
-            _require_indexes(reference, args.release)
             log = lambda line: print(line, file=sys.stderr)  # noqa: E731
+            _ensure_reference(reference, args, log)
             print("\n".join(run_crosswalk(args, reference)))
             regulator_options = {"min_targets": args.min_targets, "max_targets": args.max_targets,
                                  "networks": args.networks}
@@ -835,7 +944,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"array job {ids['array']}, finalize job {ids['finalize']}, run-finish job {ids['finish']}")
                 print(submitted_json(ids, ("array", "finalize", "finish")))
                 print(f"logs: {ids['logs']}")
-                print(f"when job {ids['finish']} ends: {args.out}/{args.out.resolve().name}_combined_results.zip and the workbook are written; "
+                print(f"when job {ids['finish']} ends: {args.out}/{results_stem(args.out.resolve().name)}.zip is written; "
                       f"its log ends with the summaries")
                 return 0
             print("\n".join(run_local(args.out, reference, release=args.release, settings=settings,

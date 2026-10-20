@@ -95,10 +95,10 @@ def _homology_text(rows):
     return "\n".join(lines) + "\n"
 
 
-def _species_dir(base, species, protein, ncrna):
-    hom = base / "release-116/tsv/ensembl-compara/homologies" / species
-    p = _gz(hom / "Compara.116.protein_default.homologies.tsv.gz", _homology_text(protein))
-    n = _gz(hom / "Compara.116.ncrna_default.homologies.tsv.gz", _homology_text(ncrna))
+def _species_dir(base, species, protein, ncrna, release=116):
+    hom = base / f"release-{release}/tsv/ensembl-compara/homologies" / species
+    p = _gz(hom / f"Compara.{release}.protein_default.homologies.tsv.gz", _homology_text(protein))
+    n = _gz(hom / f"Compara.{release}.ncrna_default.homologies.tsv.gz", _homology_text(ncrna))
     (hom / "MD5SUM").write_text("".join(f"{hashlib.md5(f.read_bytes()).hexdigest()}  {f.name}\n" for f in (p, n)))
     return hom
 
@@ -108,7 +108,7 @@ def mirror(tmp_path):
     return _mirror_for(tmp_path)
 
 
-def _mirror_for(tmp_path):
+def _mirror_for(tmp_path, releases=(116,)):
     """The mirror and an empty reference directory under ``tmp_path`` (shared with other test files)."""
     from evidome import reference
 
@@ -117,28 +117,34 @@ def _mirror_for(tmp_path):
     _gz(ncbi / "gene_orthologs.gz", GENE_ORTHOLOGS)
     reference.DEFAULT_NCBI_BASE_URL = ncbi.as_uri()   # restored by the conftest guard after each test
     base = tmp_path / "pub"
-    (base / "release-116").mkdir(parents=True)
-    (base / "release-116" / "species_EnsemblVertebrates.txt").write_text(SPECIES_TABLE)
-    _species_dir(base, M, MACAQUE_PROTEIN, MACAQUE_NCRNA)
-    _species_dir(base, H, HUMAN_PROTEIN, HUMAN_NCRNA)
-    gtf_dir = base / "release-116/gtf/homo_sapiens"
+    for release in releases:
+        _release_for(base, release)
+    return base.as_uri(), tmp_path / "reference"
+
+
+def _release_for(base, release):
+    """One release of the mirror (1.1: a test can publish several, as Ensembl does)."""
+    (base / f"release-{release}").mkdir(parents=True)
+    (base / f"release-{release}" / "species_EnsemblVertebrates.txt").write_text(SPECIES_TABLE)
+    _species_dir(base, M, MACAQUE_PROTEIN, MACAQUE_NCRNA, release)
+    _species_dir(base, H, HUMAN_PROTEIN, HUMAN_NCRNA, release)
+    gtf_dir = base / f"release-{release}/gtf/homo_sapiens"
     gtf_lines = ["#!genome-build GRCh38.p14"] + [
         f'1\tensembl\tgene\t1\t100\t.\t+\t.\tgene_id "{g}"; gene_version "1"; gene_name "{s}"; gene_biotype "{b}";'
         for g, s, b in GTF_GENES] + ['1\tensembl\ttranscript\t1\t100\t.\t+\t.\tgene_id "ENSG00000000001"; transcript_id "ENST1";']
-    gtf = _gz(gtf_dir / "Homo_sapiens.GRCh38.116.gtf.gz", "\n".join(gtf_lines) + "\n")
+    gtf = _gz(gtf_dir / f"Homo_sapiens.GRCh38.{release}.gtf.gz", "\n".join(gtf_lines) + "\n")
     s, b = bsd_sum(gtf)  # this directory only has CHECKSUMS: exercises the fallback
     (gtf_dir / "CHECKSUMS").write_text(f"{s} {b} {gtf.name}\n")
     # The macaque's full annotation, with the decoy variants Ensembl ships for
     # some species (e.g. sheep). It knows genes the homology files never mention.
-    mgtf_dir = base / "release-116/gtf" / M
+    mgtf_dir = base / f"release-{release}/gtf" / M
     mgtf_lines = [f'1\tensembl\tgene\t1\t100\t.\t+\t.\tgene_id "{g}"; gene_biotype "{b}";'
                   for g, b in MACAQUE_ANNOTATION]
-    mgtf = _gz(mgtf_dir / "Macaca_mulatta.Mmul_10.116.gtf.gz", "\n".join(mgtf_lines) + "\n")
-    for decoy in ("Macaca_mulatta.Mmul_10.116.chr.gtf.gz", "Macaca_mulatta.Mmul_10.116.abinitio.gtf.gz"):
+    mgtf = _gz(mgtf_dir / f"Macaca_mulatta.Mmul_10.{release}.gtf.gz", "\n".join(mgtf_lines) + "\n")
+    for decoy in (f"Macaca_mulatta.Mmul_10.{release}.chr.gtf.gz", f"Macaca_mulatta.Mmul_10.{release}.abinitio.gtf.gz"):
         _gz(mgtf_dir / decoy, "")
     s, b = bsd_sum(mgtf)
     (mgtf_dir / "CHECKSUMS").write_text(f"{s} {b} {mgtf.name}\n")
-    return base.as_uri(), tmp_path / "reference"
 
 
 def test_fetch_indexes_only_orthologs_to_human(mirror):

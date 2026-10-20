@@ -154,3 +154,14 @@ def test_a_folder_reads_csv_tsv_and_txt_by_default(tmp_path):
     (folder / "D.json").write_text("{}")
     assert [p.name for p in C.find_tables(folder)] == ["A.csv", "B.tsv", "C.txt"]
     assert [p.name for p in C.find_tables(folder, "*.tsv")] == ["B.tsv"]
+
+
+def test_geo2r_and_limma_id_columns_are_recognised(tmp_path, capsys):
+    """1.1: GeneID (GEO2R) and ENTREZID / EntrezID (limma) need no --id-column; SYMBOL is a symbol column."""
+    for id_name, symbol_name in (("GeneID", "Symbol"), ("ENTREZID", "SYMBOL"), ("EntrezID", "SYMBOL")):
+        path = tmp_path / f"{id_name}.csv"
+        path.write_text(f"{id_name},{symbol_name},A_Log2_fold_change,A_P-value,A_Q-value\n"
+                        "7157,TP53,1,0.01,0.05\n672,BRCA1,-1,0.02,0.1\n675,BRCA2,1,0.03,0.1\n")
+        assert main(["inspect", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert "NCBI GeneID" in out, (id_name, out)

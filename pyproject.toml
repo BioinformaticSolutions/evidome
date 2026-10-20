@@ -30,7 +30,7 @@ where = ["src"]
 
 # The evidence browser page, copied into every evidence zip, and the input-format document.
 [tool.setuptools.package-data]
-evidome = ["web/*.html", "docs/*.md"]
+evidome = ["docs/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

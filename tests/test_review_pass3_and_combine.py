@@ -148,7 +148,7 @@ def test_json_is_readable_by_others_like_any_file(tmp_path):
         path = jsonio.write_json(tmp_path / "x.json", {"a": 1})
     finally:
         os.umask(old)
-    assert path.stat().st_mode & 0o044 == 0o044 or jsonio._FILE_MODE & 0o044 == 0
+    assert path.stat().st_mode & 0o044 == 0o044 or jsonio._file_mode() & 0o044 == 0
 
 
 class _Short(io.BytesIO):
@@ -226,13 +226,13 @@ def test_signs_multiply_down_a_chain_of_controls(tmp_path):
     assert patterns["R-HSA-100"]["P00011"] == -1 and patterns["R-HSA-100"]["P00012"] == 1
 
 
-def test_reruns_write_the_same_zip_and_workbook(world, tmp_path):
+def test_reruns_write_the_same_zip(world, tmp_path):
     ref, table = world
     out = tmp_path / "study"
     assert main([str(table), "--out", str(out), "--reference-dir", str(ref)] + OPTS) == 0
-    first = [(out / n).read_bytes() for n in ("study_combined_results.zip", "study_workbook.xlsx")]
+    first = [(out / n).read_bytes() for n in ("study_evidome_output.zip",)]
     assert main(["report", str(out)]) == 0
-    assert [(out / n).read_bytes() for n in ("study_combined_results.zip", "study_workbook.xlsx")] == first
+    assert [(out / n).read_bytes() for n in ("study_evidome_output.zip",)] == first
 
 
 # --- pass 4 ---------------------------------------------------------------------------------------------------------

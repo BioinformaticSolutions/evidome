@@ -1,4 +1,4 @@
-"""Reference data: download, verify and index Ensembl 116 Compara.
+"""Reference data: download, verify and index Ensembl Compara, at the release the data call for (releases.py).
 
 Runs on a machine with network access; the data is downloaded where it is used.
 
@@ -43,8 +43,11 @@ On disk, under the reference directory::
                                            checksums, row counts (stamped)
 
 Every download is checksum-verified against the directory's MD5SUM (or, if
-there is none, CHECKSUMS with the BSD ``sum`` algorithm). A file that cannot be
-verified is refused, not used.
+there is none, CHECKSUMS with the BSD ``sum`` algorithm). A directory that
+publishes neither (release 112's homology folders) cannot vouch for its files:
+a gzip file there is accepted only after a full decompression whose CRC-32 and
+length match its trailer (method ``gzip-crc``). Any other file that
+cannot be verified is refused, not used.
 """
 
 from __future__ import annotations
@@ -66,16 +69,42 @@ from .errors import ProjectError
 from .jsonio import read_json, write_json
 from .wide_stats import strip_version
 
+#: 1.1: what the program writes into the reference directory belongs to the
+#: group that shares it, never to whichever account wrote it first. A folder
+#: made under it with an umask of 022 shut every other account out of it.
+SHARED_UMASK = 0o002
+
+
+def shared_writes(func):
+    """Run ``func`` with SHARED_UMASK: every file and folder it creates is group-writable.
+
+    The umask is the process's; it is restored when ``func`` returns or raises.
+    Folders inherit the reference directory's group through its setgid bit.
+    """
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        previous = os.umask(SHARED_UMASK)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            os.umask(previous)
+
+    return wrapper
+
+
 DEFAULT_BASE_URL = "https://ftp.ensembl.org/pub"
 #: NCBI Gene's bulk files. Read through ``ncbi_base_url()`` at call
 #: time, so tests can point it at a local mirror.
 DEFAULT_NCBI_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/gene/DATA"
 #: Ensembl's REST service: which species a gene ID belongs to, for any species Ensembl has.
 DEFAULT_REST_URL = "https://rest.ensembl.org"
+#: Ensembl's new platform (annotations after release 116): one folder per assembly, provider and date.
+DEFAULT_PLATFORM_URL = "https://ftp.ebi.ac.uk/pub/ensemblorganisms"
 NCBI_FILES = ("gene2ensembl.gz", "gene_orthologs.gz")
 HUMAN_TAXON = "9606"
 NCBI_ORTHOLOG_COLUMNS = ("gene_id", "human_gene_id", "ncbi_gene_id", "human_ncbi_gene_id")
-DEFAULT_RELEASE = 116
 HOMOLOGY_KINDS = ("protein", "ncrna")
 HUMAN = "homo_sapiens"
 
@@ -89,11 +118,45 @@ ORTHOLOG_COLUMNS = (
 # where the reference data lives
 # ---------------------------------------------------------------------------
 
+def user_settings_path() -> Path:
+    """This account's own settings (1.1): where a standalone install remembers its reference directory.
+    The CONFIG_DIR environment variable (prefixed with the program name) moves it; tests use that."""
+    from .identity import NAME, env_var
+
+    override = os.environ.get(env_var("CONFIG_DIR"), "").strip()
+    return (Path(override) if override else Path.home() / f".{NAME}") / "settings.json"
+
+
+def _remembered_reference_dir() -> Optional[Path]:
+    path = user_settings_path()
+    try:
+        value = read_json(path).get("reference_dir") if path.exists() else None
+    except (OSError, ValueError, ProjectError):
+        return None
+    return Path(value) if isinstance(value, str) and value.strip() else None
+
+
+def _remember_reference_dir(path: Path) -> None:
+    target = user_settings_path()
+    try:
+        settings = read_json(target) if target.exists() else {}
+    except (OSError, ValueError, ProjectError):
+        settings = {}
+    if settings.get("reference_dir") == str(Path(path).resolve()):
+        return
+    settings["reference_dir"] = str(Path(path).resolve())
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json(target, settings)
+    except OSError:
+        pass                 # remembering is a convenience: a home that cannot be written to changes nothing
+
+
 def resolve_reference_dir(explicit: Optional[Path] = None) -> Tuple[Path, str]:
     """Where the reference data lives, and which rule decided it.
 
-    1. ``--reference-dir`` on the command line -- an explicit, one-command
-       choice (testing, a one-off).
+    1. ``--reference-dir`` on the command line. Without Paralome (a standalone install) it is also
+       remembered in this account's settings, so later runs need not repeat it (1.1).
     2. The communal root Paralome reports for a set-up machine (asked, never
        re-derived -- see sister.py): ``<shared_root>/<name>/``, a sibling of
        Paralome's ``genomes/`` and ``registry/``. This program is
@@ -102,29 +165,46 @@ def resolve_reference_dir(explicit: Optional[Path] = None) -> Tuple[Path, str]:
        variable is ignored -- the rule Paralome applies ("site.json wins
        outright").
     3. The REFERENCE environment variable (prefixed with the program name).
+    4. The directory this account last gave with --reference-dir, standalone.
+
+    With none of them it stops and says what to give: a standalone install knows nothing of Paralome's shared
+    genomes or indexes, so the user names where the reference data are, or should be built (1.1).
     """
-    from .identity import NAME, env_var
+    from .identity import env_var
     from .sister import sister
 
-    if explicit is not None:
-        return Path(explicit), "--reference-dir"
     paralome = sister()
+    if explicit is not None:
+        if not paralome.usable:
+            _remember_reference_dir(Path(explicit))
+        return Path(explicit), "--reference-dir"
     if paralome.usable and paralome.shared_root is not None:
+        from .identity import NAME
+
         return paralome.shared_root / NAME, f"Paralome's shared root ({paralome.command})"
     value = os.environ.get(env_var("REFERENCE"), "").strip()
     if value:
         return Path(value), f"{env_var('REFERENCE')} ({paralome.summary()})"
+    remembered = _remembered_reference_dir()
+    if remembered is not None:
+        return remembered, f"this account's last --reference-dir ({user_settings_path()})"
     raise ProjectError(
         13,
-        f"no --reference-dir, no ${env_var('REFERENCE')}, and no shared root from Paralome: {paralome.summary()}",
+        "no reference directory. Give --reference-dir DIR: where the reference data and indexes are, or where "
+        "they should be built (remembered for this account's later runs). For a run, give --gtf with the "
+        f"annotation the data were counted against. (Paralome: {paralome.summary()})",
     )
 
 
-def release_dir(reference_dir: Path, release: int = DEFAULT_RELEASE) -> Path:
+def release_dir(reference_dir: Path, release=None) -> Path:
+    if release is None:
+        from .releases import human_release
+
+        release = human_release(reference_dir)
     return Path(reference_dir) / f"ensembl-{release}"
 
 
-def human_genes_path(reference_dir: Path, release: int = DEFAULT_RELEASE) -> Path:
+def human_genes_path(reference_dir: Path, release=None) -> Path:
     """The human gene index, or EVD-0013 if it is missing (never a raw
     FileNotFoundError)."""
     path = release_dir(reference_dir, release) / "human_genes.tsv"
@@ -133,8 +213,26 @@ def human_genes_path(reference_dir: Path, release: int = DEFAULT_RELEASE) -> Pat
     return path
 
 
+_HOMOLOGY_NAMES: Dict[Tuple[str, object, str, str], str] = {}
+
+
 def homology_url(base: str, release: int, species: str, kind: str) -> str:
-    return f"{base}/release-{release}/tsv/ensembl-compara/homologies/{species}/Compara.{release}.{kind}_default.homologies.tsv.gz"
+    """The species' homology file of one kind for the release, named as that release's folder names it.
+
+    Ensembl has not always published them the same way: release 116 gzips them (.tsv.gz, with MD5SUM), release
+    113 does not (.tsv, CHECKSUMS only). The folder's own listing decides, once per file; when it cannot be
+    listed, the gzipped name is used and the download reports what was not there."""
+    key = (base, release, species, kind)
+    if key not in _HOMOLOGY_NAMES:
+        directory = f"{base}/release-{release}/tsv/ensembl-compara/homologies/{species}"
+        stem = f"Compara.{release}.{kind}_default.homologies.tsv"
+        try:
+            listed = set(_list_directory(directory))
+        except ProjectError:
+            listed = set()
+        _HOMOLOGY_NAMES[key] = next((f"{directory}/{name}" for name in (stem + ".gz", stem) if name in listed),
+                                    f"{directory}/{stem}.gz")
+    return _HOMOLOGY_NAMES[key]
 
 
 def human_gtf_url(base: str, release: int) -> Tuple[str, str]:
@@ -241,7 +339,29 @@ def verify(path: Path, directory_url: str) -> Dict[str, str]:
             if (checksum, blocks) != (int(expected[0]), int(expected[1])):
                 raise ProjectError(11, f"{name}: sum {checksum} {blocks}, CHECKSUMS says {' '.join(expected)}")
             return {"method": "bsd-sum", "value": f"{checksum} {blocks}"}
+    if not md5_text and not sums_text and name.endswith(".gz"):
+        # The folder publishes no checksum at all (Ensembl 112's homologies). A folder that publishes
+        # one and does not list this file is still refused, above and below.
+        return gzip_check(path)
     raise ProjectError(11, f"{name}: no MD5SUM or CHECKSUMS entry in {directory_url}")
+
+
+def gzip_check(path: Path) -> Dict[str, str]:
+    """Decompress the whole file; gzip checks every member's CRC-32 and length against its trailer.
+
+    Proves the file is complete and uncorrupted, not that it is the publisher's: the weaker check, recorded as
+    ``gzip-crc`` so reference.json shows which files rest on it."""
+    name = Path(path).name
+    crc, size = 0, 0
+    try:
+        with gzip.open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                crc = zlib.crc32(chunk, crc)
+                size += len(chunk)
+    except (OSError, EOFError, zlib.error) as exc:
+        raise ProjectError(11, f"{name}: no MD5SUM or CHECKSUMS in its folder, and it is not a complete, "
+                               f"valid gzip file ({exc})") from exc
+    return {"method": "gzip-crc", "value": f"{crc:08x} {size}"}
 
 
 # ---------------------------------------------------------------------------
@@ -510,8 +630,12 @@ def index_ncbi_orthologs(gene2ensembl: Path, gene_orthologs: Path, taxon: str, o
             "ncbi_orthologs_to_human": len(rows)}
 
 
-def taxonomy_ids(*, release: int = DEFAULT_RELEASE, base_url: str = DEFAULT_BASE_URL) -> Dict[str, str]:
+def taxonomy_ids(*, release=None, base_url: str = DEFAULT_BASE_URL) -> Dict[str, str]:
     """Ensembl species name -> NCBI taxonomy ID, from the release's own species table."""
+    if release is None:
+        from .releases import newest_release
+
+        release = newest_release(base_url)
     body = _fetch_text(f"{base_url}/release-{release}/{SPECIES_TABLE}")
     if body is None:
         raise ProjectError(10, f"{base_url}/release-{release}/{SPECIES_TABLE}: not available")
@@ -526,6 +650,62 @@ def taxonomy_ids(*, release: int = DEFAULT_RELEASE, base_url: str = DEFAULT_BASE
     return table
 
 
+def unwritable_reason(
+    path: Path,
+    *,
+    groups: Optional[Iterable[int]] = None,
+    can_write=None,
+) -> str:
+    """Why this account cannot write ``path`` in the shared reference, as the fix.
+
+    1.1. EVD-0015 used to ask for the modes to be changed even when they were
+    right and the account was simply not in the reference's group. The
+    nearest folder of ``path`` that exists says which case it is: the
+    account is not in that folder's group (membership is what counts, not
+    ownership); the folder is not group-writable; or neither, and the text is
+    the general one. ``groups`` and ``can_write`` are for tests, which may run
+    as root.
+    """
+    import grp
+    import pwd
+    import stat as stat_module
+
+    folder = Path(path)
+    while not folder.exists() and folder != folder.parent:
+        folder = folder.parent
+    try:
+        info = folder.stat()
+    except OSError:
+        return ""
+    try:
+        group = grp.getgrgid(info.st_gid).gr_name
+    except (KeyError, OverflowError):
+        group = str(info.st_gid)
+    if groups is None:
+        groups = set(os.getgroups()) | {os.getegid()}
+    if can_write is None:
+        can_write = os.access(folder, os.W_OK | os.X_OK)
+    if can_write:
+        return ""
+    if info.st_gid not in set(groups):
+        try:
+            account = pwd.getpwuid(os.geteuid()).pw_name
+        except KeyError:
+            account = str(os.geteuid())
+        return (f"this account ({account}) is not in group '{group}', which owns {folder}; the "
+                f"reference's modes are not the problem. Ask the administrator to add it "
+                f"(usermod -aG {group} {account}), then log in again")
+    mode = stat_module.S_IMODE(info.st_mode)
+    if not mode & stat_module.S_IWGRP:
+        try:
+            owner = pwd.getpwuid(info.st_uid).pw_name
+        except KeyError:
+            owner = str(info.st_uid)
+        return (f"{folder} is {owner}:{group}, mode {mode:04o}, not group-writable. Its owner "
+                f"makes it so: chmod -R g+rwX {folder} and chmod g+s on its folders")
+    return ""
+
+
 def ensure_writable(directory: Path) -> Path:
     """Create ``directory`` if needed and prove it can be written, before any work starts.
 
@@ -535,20 +715,28 @@ def ensure_writable(directory: Path) -> Path:
     """
     directory = Path(directory)
     try:
+        existed = directory.exists()
         directory.mkdir(parents=True, exist_ok=True)
+        if not existed:
+            # 1.1: shared from the first write: group-writable, and its group
+            # passed on to everything made under it.
+            directory.chmod(0o2775)
         probe = directory / ".write_test"
         probe.write_text("ok")
         probe.unlink()
     except OSError as exc:
-        raise ProjectError(15, f"{directory}: {exc.strerror or exc}") from exc
+        reason = unwritable_reason(directory)
+        raise ProjectError(15, f"{directory}: {exc.strerror or exc}"
+                               + (f". {reason}" if reason else "")) from exc
     return directory
 
 
+@shared_writes
 def fetch(
     reference_dir: Path,
     species: Iterable[str],
     *,
-    release: int = DEFAULT_RELEASE,
+    release=None,
     base_url: str = DEFAULT_BASE_URL,
     threads: Optional[int] = None,
     refresh_ncbi: bool = False,
@@ -565,7 +753,11 @@ def fetch(
     """
     from .parallel import MAX_DOWNLOADS, map_ordered, resolve_threads
 
+    from .releases import human_release
+
     budget = resolve_threads(threads)
+    ensure_writable(Path(reference_dir))       # an unusable directory is said before Ensembl is asked anything
+    release = human_release(reference_dir, release, base_url, offline=False)
     root = release_dir(reference_dir, release)
     ensure_writable(root)
     manifest_path = root / "reference.json"
@@ -745,11 +937,15 @@ def species_of_ids(gene_ids: Sequence[str], *, rest_url: Optional[str] = None, s
     return counts
 
 
-def species_with_orthology(*, release: int = DEFAULT_RELEASE, base_url: Optional[str] = None) -> List[str]:
+def species_with_orthology(*, release=None, base_url: Optional[str] = None) -> List[str]:
+    if release is None:
+        from .releases import newest_release
+
+        release = newest_release(base_url)
     return _list_directory(f"{base_url or DEFAULT_BASE_URL}/release-{release}/tsv/ensembl-compara/homologies")
 
 
-def list_species(*, release: int = DEFAULT_RELEASE, base_url: str = DEFAULT_BASE_URL,
+def list_species(*, release=None, base_url: str = DEFAULT_BASE_URL,
                  text: Optional[str] = None) -> List[Dict[str, str]]:
     """Every species in the release's table, marked with whether Compara has orthology for it.
 
@@ -759,6 +955,10 @@ def list_species(*, release: int = DEFAULT_RELEASE, base_url: str = DEFAULT_BASE
     on common name, species name, assembly or accession -- so a user can search
     by the assembly they know ("Ramb") rather than guess a folder name.
     """
+    if release is None:
+        from .releases import newest_release
+
+        release = newest_release(base_url)
     body = _fetch_text(f"{base_url}/release-{release}/{SPECIES_TABLE}")
     if body is None:
         raise ProjectError(10, f"{base_url}/release-{release}/{SPECIES_TABLE}: not available")
@@ -783,8 +983,172 @@ def list_species(*, release: int = DEFAULT_RELEASE, base_url: str = DEFAULT_BASE
     return rows
 
 
-def load_manifest(reference_dir: Path, release: int = DEFAULT_RELEASE) -> Dict:
+def load_manifest(reference_dir: Path, release=None) -> Dict:
     path = release_dir(reference_dir, release) / "reference.json"
     if not path.exists():
         raise ProjectError(13, f"no reference data at {path.parent}")
     return read_json(path)
+
+
+# ---------------------------------------------------------------------------
+# Ensembl's new platform: the second Ensembl ortholog source
+# ---------------------------------------------------------------------------
+
+#: The columns of a new-platform homology.tsv.gz (verified 2026-10-22 on GCA_016772045.2 and GCA_000001405.29).
+#: Dated folder names on the platform: a dataset (YYYY_MM), a homology build (YYYY_MM_DD), an assembly version.
+_MONTH = r"^[0-9]{4}_[0-9]{2}$"
+_DAY = r"^[0-9]{4}_[0-9]{2}_[0-9]{2}$"
+_VERSION = r"^[0-9]+$"
+#: The human reference assembly (GCA_000001405) on the platform's tree.
+HUMAN_PLATFORM_PATH = "GCA/000/001/405"
+PLATFORM_HOMOLOGY_COLUMNS = ("ref_species", "ref_gene_stable_id", "query_species", "query_gene_stable_id",
+                             "homology_type", "query_perc_id")
+
+
+def _newest_dated(url: str, pattern: str) -> str:
+    import re
+
+    names = [n for n in _list_directory(url) if re.match(pattern, n)]
+    if not names:
+        raise ProjectError(10, f"{url}/: no dated folder listed")
+    return sorted(names)[-1]
+
+
+def _md5_listed(directory_url: str, name: str) -> Optional[str]:
+    text = _fetch_text(f"{directory_url}/md5sum.txt") or ""
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip("*") == name:
+            return parts[0]
+    return None
+
+
+def _download_platform(url: str, dest: Path) -> Dict[str, object]:
+    """Download one platform file, verified against the md5sum.txt beside it when it has one."""
+    directory, name = url.rsplit("/", 1)
+    expected = _md5_listed(directory, name)
+    if dest.exists() and expected and md5_file(dest) == expected:
+        return {"url": url, "path": str(dest), "reused": True, "checksum": {"method": "md5", "value": expected}}
+    _download(url, dest)
+    actual = md5_file(dest)
+    if expected and actual != expected:
+        raise ProjectError(11, f"{url}: md5 {actual}, md5sum.txt says {expected}")
+    method = "md5" if expected else UNPUBLISHED_CHECKSUM
+    return {"url": url, "path": str(dest), "reused": False, "checksum": {"method": method, "value": actual}}
+
+
+def index_platform_homologies(path: Path, species_genes: set, out_dir: Path,
+                              species: Optional[str] = None) -> Tuple[str, Dict[str, int]]:
+    """Orthologs to human from a new-platform homology.tsv.gz, written as orthologs_to_human.tsv.
+
+    The file is a genome's homologies to every other species, by best BLAST hit: reciprocal
+    (homolog_rbbh) or one-way (homolog_bbh), each with the query gene's percent identity. A row counts when one
+    side is human and the other is the genome: the query side for the genome's own file, the reference side
+    when ``species`` is given and the file is human's. Both kinds are kept, named as Ensembl names them; the
+    platform computes no gene-tree typing, high-confidence flag, GOC score or WGA coverage, so those are empty.
+    Returns the genome's species name as the file gives it, and counts."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    kept, by_type, seen = 0, {}, set()
+    genes = set()
+    found_species = species
+    with _open_tsv(path) as handle, (out_dir / "orthologs_to_human.tsv").open("w", newline="",
+                                                                              encoding="utf-8") as out:
+        reader = csv.reader(handle, delimiter="\t")
+        header = next(reader, [])
+        missing = [c for c in PLATFORM_HOMOLOGY_COLUMNS if c not in header]
+        if missing:
+            raise ProjectError(12, f"{path.name}: missing columns {', '.join(missing)}")
+        col = {name: i for i, name in enumerate(header)}
+        rs, rg, qs, qg, ht, qi = (col[c] for c in PLATFORM_HOMOLOGY_COLUMNS)
+        writer = csv.writer(out, delimiter="\t", lineterminator="\n")
+        writer.writerow(ORTHOLOG_COLUMNS)
+        for row in reader:
+            if species is None:                       # the genome's own file: it is always the query
+                found_species = found_species or row[qs]
+                genes.add(row[qg])
+                if row[rs] != HUMAN:
+                    continue
+                mine, theirs, ident = row[qg], row[rg], row[qi]
+            else:                                     # human's file: the genome is the reference side
+                if row[rs] != species:
+                    continue
+                genes.add(row[rg])
+                mine, theirs, ident = row[rg], row[qg], ""
+            key = (mine, theirs)
+            if key in seen:
+                continue
+            seen.add(key)
+            writer.writerow([mine, theirs, row[ht], "", ident, "", "", "", "protein"])
+            kept += 1
+            by_type[row[ht]] = by_type.get(row[ht], 0) + 1
+    union = genes | species_genes
+    (out_dir / "genes.txt").write_text("\n".join(sorted(union)) + "\n", encoding="utf-8")
+    return str(found_species or ""), {"genes": len(union), "annotated_genes": len(species_genes),
+                                      "genes_with_any_homology": len(genes), "orthologs_to_human": kept,
+                                      "by_homology_type": dict(sorted(by_type.items()))}
+
+
+def fetch_platform(reference_dir: Path, release: str, gtf: Path, *, human_rel, base_url: Optional[str] = None,
+                   log=print) -> str:
+    """Download and index a new-platform dataset's orthologs to human. Returns the genome's species name.
+
+    The dataset is the registered genome's (releases.platform_release). Its newest homology folder is read; when
+    it holds no rows against human, human's own dataset is read instead (the newest of the human assembly).
+    The registered GTF -- the annotation the data were counted against -- supplies the genome's genes, symbols
+    and biotypes. Human genes are the human release's (crosswalk carries the orthologs there by stable ID), so
+    the human gene index is the human release's, copied. Indexed once per version, like ``fetch``."""
+    from datetime import datetime, timezone
+
+    from .releases import platform_dataset_url
+    from .version import __version__
+
+    base = (base_url or DEFAULT_PLATFORM_URL).rstrip("/")
+    root = release_dir(reference_dir, release)
+    ensure_writable(root)
+    manifest_path = root / "reference.json"
+    manifest = read_json(manifest_path) if manifest_path.exists() else {"release": release, "species": {}}
+    for species, entry in manifest.get("species", {}).items():
+        if entry.get("indexed_by") == __version__ and (root / "species" / species / "orthologs_to_human.tsv").exists():
+            log(f"{release}: already indexed by {__version__}")
+            return species
+    human_index = release_dir(reference_dir, human_rel) / "human_genes.tsv"
+    if not human_index.exists():
+        raise ProjectError(13, f"no human gene index at {human_index}; run 'reference fetch' first")
+    dataset = platform_dataset_url(release, base)
+    homology_dir = dataset + "/homology/" + _newest_dated(dataset + "/homology", _DAY)
+    log(f"{release}: reading {homology_dir}/homology.tsv.gz (Ensembl's new platform)")
+    own = _download_platform(f"{homology_dir}/homology.tsv.gz", root / "raw" / "homology.tsv.gz")
+    stage = root / "species" / "_indexing"
+    stage.mkdir(parents=True, exist_ok=True)
+    annotated = index_gtf(Path(gtf), stage / "species_genes.tsv", ("gene_id", "symbol", "biotype"))
+    species, counts = index_platform_homologies(Path(str(own["path"])), annotated, stage)
+    files = {"homology": {k: own[k] for k in ("url", "checksum")}}
+    if not counts["orthologs_to_human"]:
+        human_base = base + "/" + HUMAN_PLATFORM_PATH
+        human_root = human_base + "/" + _newest_dated(human_base, _VERSION) + "/ensembl"
+        human_dataset = human_root + "/" + _newest_dated(human_root, _MONTH)
+        human_dir = human_dataset + "/homology/" + _newest_dated(human_dataset + "/homology", _DAY)
+        log(f"{release}: no rows against human in its own homologies; reading human's ({human_dir})")
+        theirs = _download_platform(f"{human_dir}/homology.tsv.gz", root / "raw" / "human_homology.tsv.gz")
+        _, counts = index_platform_homologies(Path(str(theirs["path"])), annotated, stage, species=species)
+        files["human_homology"] = {k: theirs[k] for k in ("url", "checksum")}
+    if not counts["orthologs_to_human"]:
+        raise ProjectError(37, f"{release}: neither its homologies nor human's hold a row between {species or 'it'} "
+                               "and human")
+    if not species:
+        raise ProjectError(12, f"{own['url']}: no rows, so the genome's species is not known")
+    target = root / "species" / species
+    if target.exists():
+        shutil.rmtree(target)
+    stage.rename(target)
+    shutil.copyfile(human_index, root / "human_genes.tsv")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    manifest.setdefault("species", {})[species] = {"files": files, "counts": counts, "fetched": now,
+                                                   "annotation": str(gtf), "indexed_by": __version__}
+    manifest["human"] = {"copied_from": str(human_index), "human_release": human_rel, "fetched": now,
+                         "indexed_by": __version__}
+    write_json(manifest_path, manifest)
+    log(f"{species}: {counts['annotated_genes']} annotated genes, {counts['orthologs_to_human']} ortholog rows "
+        f"to human ({', '.join(f'{k} {v}' for k, v in counts['by_homology_type'].items())})")
+    return species
+

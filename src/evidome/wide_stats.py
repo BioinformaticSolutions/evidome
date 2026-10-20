@@ -87,8 +87,10 @@ from .errors import ProjectError
 
 MISSING_TOKENS = frozenset({"", ".", "NA", "NaN", "nan"})
 
-ID_COLUMN_NAMES = ("Gene", "gene_id", "Ensembl_ID", "ensembl_gene_id")
-SYMBOL_COLUMN_NAMES = ("Common_name", "gene_name", "Symbol", "symbol")
+#: Ensembl names first, so a table carrying both an Ensembl and an NCBI column is read by its Ensembl IDs.
+#: 1.1: GeneID (GEO2R) and ENTREZID / EntrezID (limma, edgeR via org.*.eg.db) are recognised as well.
+ID_COLUMN_NAMES = ("Gene", "gene_id", "Ensembl_ID", "ensembl_gene_id", "GeneID", "ENTREZID", "EntrezID")
+SYMBOL_COLUMN_NAMES = ("Common_name", "gene_name", "Symbol", "symbol", "SYMBOL")
 
 CONTRAST_REQUIRED = ("P-value", "Q-value")
 #: Exactly one per contrast: Fold_change in the producer's convention (read from its values), or
@@ -442,6 +444,10 @@ def derive_ftest_directions(table: WideStatistics) -> None:
     interaction  ``<A>_x_<B>``: the difference of differences, Effect(<A contrast> within <B alt>) minus
                  Effect(<A contrast> within <B ref>) -- the interaction coefficient itself; positive when A's effect
                  is larger (more up) at B's alternative level. Needs both simple-effect contrasts and their Effect.
+                 1.1: in a design of more than two factors the two are A's contrasts within B's levels alone,
+                 averaged over the other factors (``<A stem>_within_<B level>_contrast``, as Paralome 0.5.dev87+
+                 writes them) -- looked up by exact name, not by A having only two "within" contrasts.
+                 Three-way and higher interactions have no single direction and get none.
 
     The value is added as a derived column, role ``Direction_estimate``, and ``direction_from`` says what it came
     from. An F-test whose contrasts are not in the table keeps no direction, as before. Names follow the grammar
@@ -459,12 +465,19 @@ def derive_ftest_directions(table: WideStatistics) -> None:
     # A main-effect F-test is named <factor>_<stem> (e.g. diet_WD_vs_CD): that is the only place the factor's own
     # name meets its levels, and an interaction F-test is named by factors (diet_x_metformin).
     factor_stems: Dict[str, str] = {}
+    declared_factor = _ftest_factors(table.header_lines)
     for comp in table.comparisons:
         fname = comp.source_name or comp.name
         if comp.kind == "ftest" and "_x_" not in fname:
             for st in sorted(main_stems, key=len, reverse=True):
                 if fname.endswith("_" + st):
                     factor_stems[fname[: -len(st) - 1]] = st
+                    break
+                # 1.1: an F-test named by its levels alone (NICD_vs_CTRL, the level restating the factor) says
+                # its factor in the header ("main effect of NICD (NICD versus CTRL)"), as Paralome 0.5.dev81+
+                # writes it.
+                if fname == st and fname in declared_factor:
+                    factor_stems[declared_factor[fname]] = st
                     break
     for comp in table.comparisons:
         if comp.kind != "ftest":
@@ -504,6 +517,19 @@ def drop_duplicate_ftests(table: WideStatistics) -> List[Tuple[str, str]]:
     return dropped
 
 
+_HEADER_MAIN_EFFECT = re.compile(r"^\s*#*\s*(?P<name>\S+):\s*ANOVA F-test\b.*?\bmain effect of (?P<factor>\S+) \(")
+
+
+def _ftest_factors(header_lines: Sequence[str]) -> Dict[str, str]:
+    """F-test name -> its factor, where the header says it ("<name>: ANOVA F-test, ... main effect of <factor> (")."""
+    found: Dict[str, str] = {}
+    for line in header_lines:
+        m = _HEADER_MAIN_EFFECT.match(line)
+        if m:
+            found[m.group("name")] = m.group("factor")
+    return found
+
+
 def _interaction_direction(table: WideStatistics, contrasts: Dict[str, Comparison],
                            main_stems: Dict[str, Comparison], name: str = "",
                            factor_stems: Optional[Dict[str, str]] = None) -> Tuple[Optional[List[Optional[float]]], str]:
@@ -511,35 +537,51 @@ def _interaction_direction(table: WideStatistics, contrasts: Dict[str, Compariso
 
     The pair of factors is the one the F-test names (names are matched exactly), so in a three-factor design one
     interaction never takes its sign from another. A pair is accepted only if it is the one the
-    name identifies -- through the main-effect F-tests' <factor>_<stem> names -- or, when those are absent, if it is
-    the only candidate pair in the table. Three-way and unmatched names get no direction."""
+    name identifies -- through the main-effect F-tests' factors (factor_stems) -- or, when those are absent, if it
+    is the only candidate pair in the table. Three-way and unmatched names get no direction.
+
+    1.1: the two simple effects are found by exact name, ``<A stem>_within_<B level>_contrast`` for B's two
+    levels, the level written as the contrast names write it (alone, ``<B factor>_<level>`` or
+    ``<B factor><level>``). In two factors those are A's only "within" contrasts; in more they are the ones
+    within B alone, averaged over the other factors."""
     parts = name.split("_x_") if name else []
-    wanted: Optional[set] = None
-    if len(parts) == 2 and factor_stems and all(p in factor_stems for p in parts):
-        wanted = {factor_stems[parts[0]], factor_stems[parts[1]]}
-    elif len(parts) != 2:
+    if len(parts) != 2:
         return None, ""
+    factor_stems = factor_stems or {}
+    factor_of = {stem: factor for factor, stem in factor_stems.items()}
+    wanted: Optional[set] = None
+    if all(p in factor_stems for p in parts):
+        wanted = {factor_stems[parts[0]], factor_stems[parts[1]]}
+
+    def within(stem_a: str, stem_b: str, level: str) -> Optional[Comparison]:
+        b = factor_of.get(stem_b)
+        labels = [level] + ([f"{b}_{level}", f"{b}{level}"] if b else [])
+        found = [contrasts[n] for n in dict.fromkeys(f"{stem_a}_within_{label}_contrast" for label in labels)
+                 if n in contrasts and "Effect" in contrasts[n].columns]
+        return found[0] if len(found) == 1 else None
+
     candidates = []
     for stem_a in sorted(main_stems):
-        within = {}
-        for cname, c in contrasts.items():
-            if cname.startswith(stem_a + "_within_") and cname.endswith("_contrast") and "Effect" in c.columns:
-                within[cname[len(stem_a) + len("_within_"): -len("_contrast")]] = c
-        if len(within) != 2:
-            continue
-        for stem_b in main_stems:
-            if stem_b == stem_a:
+        for stem_b in sorted(main_stems):
+            if stem_b == stem_a or (wanted is not None and {stem_a, stem_b} != wanted):
                 continue
-            for alt, ref in ((a, b) for a in within for b in within if a != b):
-                if stem_b == f"{alt}_vs_{ref}":
-                    candidates.append((stem_a, stem_b, within[alt], within[ref]))
-    if wanted is not None:
-        candidates = [c for c in candidates if {c[0], c[1]} == wanted]
-    elif len({frozenset((c[0], c[1])) for c in candidates}) != 1:
-        return None, ""
+            # stem_b is <alt>_vs_<ref>; a level may itself hold "_vs_", so every split is tried and only one may fit
+            pairs = []
+            pieces = stem_b.split("_vs_")
+            for i in range(1, len(pieces)):
+                alt, ref = "_vs_".join(pieces[:i]), "_vs_".join(pieces[i:])
+                hi, lo = within(stem_a, stem_b, alt), within(stem_a, stem_b, ref)
+                if hi is not None and lo is not None:
+                    pairs.append((hi, lo))
+            if len(pairs) == 1:
+                candidates.append((stem_a, stem_b, *pairs[0]))
     if not candidates:
+        return None, ""
+    if wanted is None and len({frozenset((c[0], c[1])) for c in candidates}) != 1:
         return None, ""
     _, _, hi_c, lo_c = candidates[0]
     hi, lo = table.column(hi_c, "Effect"), table.column(lo_c, "Effect")
     diff = [None if x is None or y is None else x - y for x, y in zip(hi, lo)]
     return diff, f"{hi_c.name} (Effect) minus {lo_c.name} (Effect)"
+
+

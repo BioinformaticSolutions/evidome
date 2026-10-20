@@ -46,8 +46,9 @@ def test_one_command_writes_everything_locally(world, tmp_path, capsys):
     out = tmp_path / "study"
     assert main([str(table), "--out", str(out), "--reference-dir", str(ref)] + OPTS) == 0
     for path in ("ortholog_crosswalk.csv", "enrichment/enrichment.json", "regulators/regulators.json",
-                 "evidence/manifest.json", "study_combined_results.zip", "study_workbook.xlsx"):
+                 "evidence/manifest.json", "study_evidome_output.zip"):
         assert (out / path).exists(), path
+    assert not list(out.glob("*.xlsx"))                     # no workbook
     text = capsys.readouterr().out
     assert "gene sets with q < 0.05" in text and "regulators with q < 0.05" in text
     assert "figures:" in text or "figures in" in text     # this tiny fixture has nothing two-sided to draw
@@ -98,7 +99,8 @@ def test_slurm_chains_finish_after_finalize(world, tmp_path, monkeypatch, capsys
         run_slurm_task(plan_path, i, threads=1, log=lambda *_: None)
     run_slurm_finalize(plan_path)
     lines = run_finish(plan_path, threads=1, log=lambda *_: None)
-    assert (out / "study_combined_results.zip").exists() and any("workbook" in l for l in lines)
+    assert (out / "study_evidome_output.zip").exists() and any("output.zip" in l for l in lines)
+    assert not any("workbook" in l for l in lines) and not list(out.glob("*.xlsx"))
     assert any(l.startswith(("figures", "wrote")) and "figure" in l for l in lines)
 
 

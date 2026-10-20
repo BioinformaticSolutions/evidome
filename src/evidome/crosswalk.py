@@ -65,10 +65,62 @@ class SpeciesCall:
     ranking: List[Tuple[str, int]]
     genome: Optional[GenomeCall] = None
     notes: List[str] = field(default_factory=list)
+    #: 1.1: the Ensembl release the orthologs came from (the registered genome's, else the human
+    #: release) and the release the human genes were read at -- the same unless the input's annotation is older.
+    orthology_release: object = None
+    human_release: object = None
 
     @property
     def fraction(self) -> float:
         return self.matched / self.total if self.total else 0.0
+
+
+def orthology_release(genome: Optional[GenomeCall], human_rel) -> Tuple[object, Optional[str]]:
+    """(release, species) the input's orthologs come from: the registered genome's own Ensembl release and
+    species, read from its GTF's name; the human release when there is no registered genome or it is human
+    (human input needs no orthologs, only its genes carried to the human release, which stable IDs do)."""
+    from .releases import HUMAN_ACCESSION, is_platform, platform_parts, release_of_gtf, species_of_gtf
+
+    if genome is None:
+        return human_rel, None
+    rel = release_of_gtf(genome.gtf, genome.name)
+    if is_platform(rel):
+        # Ensembl's new platform names genomes by assembly; the species name comes from its homology file
+        if platform_parts(rel)[0].startswith(HUMAN_ACCESSION):
+            return human_rel, HUMAN
+        return rel, None
+    species = species_of_gtf(genome.gtf)
+    if species == HUMAN:
+        return human_rel, HUMAN
+    return rel, species
+
+
+def ensure_genome_species(gene_ids: Sequence[str], reference_dir: Path, *, human_rel, min_fraction: float = 0.9,
+                          threads: Optional[int] = None, registry: Optional[Path] = None, fetch_species: bool = True,
+                          gtf: Optional[Path] = None, log=print) -> Optional[GenomeCall]:
+    """The registry first: a registered genome that holds the input names its species and Ensembl release, and
+    that release's reference data for the species are fetched once (as 'reference fetch --species --release'
+    would). Returns the genome, or None when no registered genome holds the input."""
+    from . import reference
+    from .reference import fetch
+
+    genome, _, _ = identify_registered_genome(gene_ids, reference_dir, min_fraction=min_fraction, threads=threads,
+                                              registry=registry, gtf=gtf)
+    if genome is None and gtf is not None:
+        raise ProjectError(14, f"--gtf {gtf} holds fewer than {min_fraction:.0%} of the input's gene IDs: it is not "
+                               "the annotation the data were counted against")
+    if genome is None:
+        return None
+    rel, species = orthology_release(genome, human_rel)
+    log(f"registered genome {genome.name} holds {genome.matched}/{genome.total} IDs: "
+        + ("human" if species == HUMAN else f"{species or 'its species'}, Ensembl {rel}"))
+    from .releases import is_platform
+
+    if is_platform(rel) and fetch_species:
+        reference.fetch_platform(reference_dir, rel, Path(genome.gtf), human_rel=human_rel, log=log)
+    elif species not in (None, HUMAN) and fetch_species:
+        fetch(reference_dir, [species], release=rel, base_url=reference.DEFAULT_BASE_URL, threads=threads, log=log)
+    return genome
 
 
 def _read_ids(path: Path) -> set:
@@ -86,9 +138,12 @@ def _human_genes(root: Path) -> Dict[str, Tuple[str, str]]:
     return table
 
 
-def identify_species(gene_ids: Sequence[str], reference_dir: Path, *, release: int = 116,
+def identify_species(gene_ids: Sequence[str], reference_dir: Path, *, release=None,
                      min_fraction: float = 0.9) -> SpeciesCall:
     """The indexed species whose gene list contains the most input IDs."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     root = release_dir(reference_dir, release)
     manifest = load_manifest(reference_dir, release)
     ids = set(gene_ids)
@@ -115,7 +170,7 @@ def identify_species(gene_ids: Sequence[str], reference_dir: Path, *, release: i
     return call
 
 
-def ensure_species(gene_ids: Sequence[str], reference_dir: Path, *, release: int = 116, min_fraction: float = 0.5,
+def ensure_species(gene_ids: Sequence[str], reference_dir: Path, *, release=None, min_fraction: float = 0.5,
                    threads: Optional[int] = None, log=print) -> Optional[str]:
     """Download the input's species when no downloaded species holds its IDs, so a new species is
     found, converted and tested in one run.
@@ -124,6 +179,9 @@ def ensure_species(gene_ids: Sequence[str], reference_dir: Path, *, release: int
     prefixes this program knows); a clear majority is fetched exactly as 'reference fetch --species' would,
     once, into the shared reference directory. Returns the species fetched, or None when nothing was needed.
     Needs network access; --no-fetch-species turns it off."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from . import reference
     from .reference import fetch, species_of_ids, species_with_orthology
 
@@ -143,8 +201,10 @@ def ensure_species(gene_ids: Sequence[str], reference_dir: Path, *, release: int
                                           f"could not ask Ensembl which species this is ({err.message})") from None
     asked = min(len(set(gene_ids)), 50)
     if not found:
-        raise ProjectError(14, f"Ensembl does not know any of {asked} sampled gene IDs (e.g. {gene_ids[0]}); "
-                               "the input may not use Ensembl IDs")
+        raise ProjectError(14, f"Ensembl's current release does not know any of {asked} sampled gene IDs (e.g. "
+                               f"{gene_ids[0]}). IDs of an annotation Ensembl has since replaced are known only to "
+                               "the release they came from: register the genome the data were counted against "
+                               "('reference genome add', or Paralome's genome add) so its release is used")
     species, n = max(sorted(found.items()), key=lambda kv: kv[1])
     if n * 2 <= asked and len(found) == 1:
         raise ProjectError(14, f"Ensembl knows only {n} of {asked} sampled gene IDs ({species}); too few to "
@@ -163,6 +223,10 @@ def ensure_species(gene_ids: Sequence[str], reference_dir: Path, *, release: int
         raise ProjectError(original.code, f"{original.message}; Ensembl confirms the IDs are {species}, which is "
                                           "already downloaded -- the IDs may come from another release or "
                                           "assembly")
+    from .releases import UNFETCHED
+
+    if release == UNFETCHED:     # nothing downloaded yet: the newest release Ensembl publishes
+        release = human_release(reference_dir, None, reference.DEFAULT_BASE_URL, offline=False)
     if species != HUMAN:
         with_orthology = species_with_orthology(release=release, base_url=reference.DEFAULT_BASE_URL)
         if with_orthology and species not in with_orthology:
@@ -174,11 +238,12 @@ def ensure_species(gene_ids: Sequence[str], reference_dir: Path, *, release: int
 
 
 def build_crosswalk(gene_ids: Sequence[str], symbols: Sequence[Optional[str]], reference_dir: Path, *,
-                    release: int = 116, min_fraction: float = 0.9, min_ensembl_fraction: float = 0.5,
+                    release=None, min_fraction: float = 0.9, min_ensembl_fraction: float = 0.5,
                     use_registry: bool = True, registry: Optional[Path] = None,
                     threads: Optional[int] = None, use_ncbi: bool = True,
                     use_symbols: bool = True,
-                    translation: Optional[Translation] = None) -> Tuple[SpeciesCall, List[Dict[str, object]]]:
+                    translation: Optional[Translation] = None,
+                    gtf: Optional[Path] = None) -> Tuple[SpeciesCall, List[Dict[str, object]]]:
     """Identify the genome (registered first) and species, then map every gene to human.
 
     With a registered genome holding >= ``min_fraction`` of the input IDs, that
@@ -192,6 +257,10 @@ def build_crosswalk(gene_ids: Sequence[str], symbols: Sequence[Optional[str]], r
     the translation was made in, and the registry is not consulted. Every row records the ID as given and how
     it was translated.
     """
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
+    human_rel = release
     if translation is not None and translation.translated:
         root = release_dir(reference_dir, release)
         known = set(_human_genes(root)) if translation.species == HUMAN else \
@@ -202,15 +271,23 @@ def build_crosswalk(gene_ids: Sequence[str], symbols: Sequence[Optional[str]], r
         genome, genome_genes = None, {}
     else:
         genome, genome_genes, notes = (None, {}, ["registry not consulted"])
-        if use_registry:
+        if use_registry or gtf is not None:
             genome, genome_genes, notes = identify_registered_genome(
-                gene_ids, reference_dir, min_fraction=min_fraction, threads=threads, registry=registry)
+                gene_ids, reference_dir, min_fraction=min_fraction, threads=threads, registry=registry, gtf=gtf)
+        # 1.1: the registered genome's own Ensembl release supplies the orthologs
+        release, _ = orthology_release(genome, human_rel)
         call = identify_species(gene_ids, reference_dir, release=release,
                                 min_fraction=min_ensembl_fraction if genome else min_fraction)
         call.genome = genome
         call.notes = list(notes)  # a copy: later notes must not also land in genome.notes
+    call.orthology_release, call.human_release = release, human_rel
     root = release_dir(reference_dir, release)
     human = _human_genes(root)
+    # Orthologs of an older release reach that release's human genes; they are carried to the human release,
+    # which gene sets and regulators are read at, by stable ID. A pair to a human gene the human release no
+    # longer has is left out and counted.
+    carry_to = human_rel if str(human_rel) != str(release) else None
+    human_now = _human_genes(release_dir(reference_dir, human_rel)) if carry_to is not None else human
     rows: List[Dict[str, object]] = []
     untranslated = translation.untranslated if translation is not None else {}
 
@@ -264,6 +341,19 @@ def build_crosswalk(gene_ids: Sequence[str], symbols: Sequence[Optional[str]], r
         for row in csv.DictReader(handle, delimiter="\t"):
             if row["gene_id"] in wanted:
                 by_input[row["gene_id"]].append(row)
+    if carry_to is not None:
+        dropped = 0
+        for gid in list(by_input):
+            kept = [h for h in by_input[gid] if h["human_gene_id"] in human_now]
+            dropped += len(by_input[gid]) - len(kept)
+            if kept:
+                by_input[gid] = kept
+            else:
+                del by_input[gid]
+        call.notes.append(f"orthologs from Ensembl {release} Compara (the release of the registered genome); "
+                          f"human genes carried to Ensembl {carry_to} by stable ID, {dropped} pair(s) to a human "
+                          f"gene Ensembl {carry_to} no longer has left out")
+        human = human_now
 
     # Source 2: NCBI Gene orthologs, only for genes Compara left without a human gene.
     ncbi_path = species_dir / "ncbi_orthologs_to_human.tsv"

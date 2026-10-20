@@ -39,3 +39,13 @@ def no_network_to_ensembl_rest(monkeypatch):
         raise ProjectError(10, "Ensembl REST is not contacted from tests")
 
     monkeypatch.setattr(reference, "species_of_ids", refuse)
+
+
+@pytest.fixture(autouse=True)
+def own_settings(monkeypatch, tmp_path):
+    """A test never reads or writes the account's own settings (a standalone install remembers its
+    --reference-dir there): each test gets an empty settings folder of its own, and no REFERENCE variable."""
+    from evidome.identity import env_var
+
+    monkeypatch.setenv(env_var("CONFIG_DIR"), str(tmp_path / "account-settings"))
+    monkeypatch.delenv(env_var("REFERENCE"), raising=False)

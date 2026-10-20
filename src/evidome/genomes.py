@@ -22,7 +22,8 @@ when two files publish the same name, the entry in its registrant's own file
 wins, as in Paralome.
 
 Each genome's GTF is indexed once into the reference directory
-(``registered_genomes/<name>/genes.tsv``) and reused until the GTF itself
+(``registered_genomes/<name>/genes.tsv``), shared by every account that uses
+it (``reference.shared_writes``), and reused until the GTF itself
 changes (path, size or modification time) or the program version changes --
 decided by ``checkpoint.reuse_decision``, the one authority on reuse.
 Only genomes whose gene IDs share the input's prefix are indexed at all, found
@@ -39,7 +40,8 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .checkpoint import reuse_decision, write_checkpoint
-from .reference import _open_tsv, index_gtf
+from .errors import ProjectError
+from .reference import _open_tsv, index_gtf, shared_writes
 
 REGISTRY_KEY = "site_registry"
 REGISTRY_DIRNAME = "registry"
@@ -120,6 +122,100 @@ def own_registry_dir(reference_dir: Path) -> Path:
     return Path(reference_dir) / OWN_REGISTRY_DIRNAME
 
 
+#: 1.1: the own registry's file format, written by ``reference genome add``.
+OWN_REGISTRY_SCHEMA = "genome_registry.v1"
+
+
+def current_user() -> str:
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except Exception:              # no login name in this environment
+        import os
+
+        return str(os.getuid())
+
+
+def _registry_file(reference_dir: Path, user: str) -> Path:
+    return own_registry_dir(reference_dir) / f"{user}.json"
+
+
+def _read_registry_file(path: Path) -> Dict:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@shared_writes
+def add_genome(reference_dir: Path, name: str, gtf: Path, *, user: Optional[str] = None) -> Path:
+    """Register a genome in the program's own registry: the standalone counterpart of Paralome's.
+
+    1.1. Anyone may register a genome; a name is registered once on the
+    machine (here or in Paralome's registry, EVD-0033); only the account that
+    registered it may remove it (``remove_genome``). Each account's entries
+    are in its own file, ``genome_registry/<account>.json``, shared by the group.
+    """
+    from datetime import datetime, timezone
+
+    from .jsonio import write_json
+
+    user = user or current_user()
+    name = str(name).strip()
+    if not name or re.search(r"[\\/\s]", name):
+        raise ProjectError(35, f"genome name {name!r}: use letters, digits, '.', '_' or '-' (no spaces or slashes)")
+    path = Path(gtf).expanduser().resolve()
+    first = gtf_first_gene_id(path) if path.is_file() else None
+    if first is None:
+        raise ProjectError(35, f"{path}: not a readable GTF with gene lines")
+    existing = all_registered_genomes(reference_dir)
+    if name in existing:
+        entry = existing[name]
+        raise ProjectError(33, f"{name} is already registered by {entry.get('registered_by') or 'another account'} "
+                               f"({entry.get('_source')}, GTF {entry.get('gtf')})")
+    target = _registry_file(reference_dir, user)
+    payload = _read_registry_file(target)
+    payload.update({"schema": OWN_REGISTRY_SCHEMA, "registered_by": user})
+    genomes = payload.setdefault("genomes", {})
+    genomes[name] = {"gtf": str(path), "registered_by": user,
+                     "registered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                     "first_gene_id": first}
+    write_json(target, payload)
+    return target
+
+
+@shared_writes
+def remove_genome(reference_dir: Path, name: str, *, user: Optional[str] = None) -> Path:
+    """Remove a genome this account registered. Another account's entry is refused (EVD-0034)."""
+    from .jsonio import write_json
+
+    user = user or current_user()
+    target = _registry_file(reference_dir, user)
+    payload = _read_registry_file(target)
+    genomes = payload.get("genomes") if isinstance(payload.get("genomes"), dict) else {}
+    if name not in genomes:
+        entry = all_registered_genomes(reference_dir).get(name)
+        if entry is None:
+            raise ProjectError(34, f"no genome named {name} is registered")
+        raise ProjectError(34, f"{name} was registered by {entry.get('registered_by') or 'another account'} "
+                               f"({entry.get('_source')}); only that account can remove it")
+    del genomes[name]
+    write_json(target, payload)
+    return target
+
+
+def genome_rows(reference_dir: Path) -> List[Dict[str, str]]:
+    """Every registered genome, for ``reference genome list``."""
+    rows = []
+    for name, entry in sorted(all_registered_genomes(reference_dir).items()):
+        rows.append({"name": name, "source": entry.get("_source", ""),
+                     "registered_by": str(entry.get("registered_by") or ""), "gtf": str(entry.get("gtf") or ""),
+                     "withdrawn": "yes" if entry.get(WITHDRAWN_KEY) else ""})
+    return rows
+
+
 def all_registered_genomes(reference_dir: Path, sister_dir: Optional[Path] = None) -> Dict[str, Dict]:
     """Every genome from every source, each entry tagged with ``_source``.
 
@@ -169,24 +265,57 @@ def _safe(name: str) -> str:
     return f"{safe}-{hashlib.sha1(name.encode('utf-8')).hexdigest()[:8]}"
 
 
-def _index_one(task: Tuple[str, str, str]) -> Tuple[str, Optional[str], str]:
-    """Process-pool worker: (name, gtf, cache_dir) -> (name, genes.tsv or None, note)."""
-    name, gtf, cache = task
+#: _index_one's note for an index that could not be written; the caller stops on it.
+UNWRITABLE = "unwritable"
+
+
+@shared_writes
+def _index_into(cache_dir: Path, gtf_path: Path, params: Mapping, name: str) -> int:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    genes = cache_dir / "genes.tsv"
+    count = len(index_gtf(gtf_path, genes, ("gene_id", "symbol", "biotype")))
+    write_checkpoint(cache_dir / "checkpoint.json", params, {"genes": str(genes)}, genome=name, genes=count)
+    return count
+
+
+def _index_one(task: Tuple[str, ...]) -> Tuple[str, Optional[str], str]:
+    """Process-pool worker: (name, gtf, cache_dir) -> (name, genes.tsv or None, note).
+
+    1.1: the index belongs to the shared reference, whoever writes it first
+   . It is written group-writable;
+    an existing one is read even by an account that could not write it; one
+    that cannot be written at all is reported, and the run stops on it rather
+    than keep a private copy.
+    """
+    name, gtf, cache = task[:3]
     gtf_path = Path(gtf)
     try:
         stat = gtf_path.stat()
     except OSError as exc:
         return name, None, f"{name}: GTF not readable ({exc.strerror or exc})"
-    cache_dir = Path(cache)
-    checkpoint = cache_dir / "checkpoint.json"
-    genes = cache_dir / "genes.tsv"
     params = {"gtf": str(gtf_path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-    if reuse_decision(checkpoint, params):
-        return name, str(genes), "reused"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    count = len(index_gtf(gtf_path, genes, ("gene_id", "symbol", "biotype")))
-    write_checkpoint(checkpoint, params, {"genes": str(genes)}, genome=name, genes=count)
-    return name, str(genes), f"indexed {count} genes"
+    if reuse_decision(Path(cache) / "checkpoint.json", params):
+        return name, str(Path(cache) / "genes.tsv"), "reused"
+    try:
+        count = _index_into(Path(cache), gtf_path, params, name)
+    except OSError as exc:
+        return name, None, f"{UNWRITABLE}: {cache}: {exc.strerror or exc}"
+    return name, str(Path(cache) / "genes.tsv"), f"indexed {count} genes"
+
+
+def gtf_genome_name(gtf: Path) -> str:
+    """The name a GTF given with --gtf is indexed under: its file name without .gtf/.gz, or, for Ensembl's new
+    platform (always genes.gtf.gz), its dataset."""
+    from .releases import platform_release
+
+    platform = platform_release(gtf)
+    if platform:
+        return platform
+    name = Path(gtf).name
+    for suffix in (".gz", ".bgz", ".gtf"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name
 
 
 def read_gene_table(path: Path) -> Dict[str, Tuple[str, str]]:
@@ -206,21 +335,31 @@ def identify_registered_genome(
     min_fraction: float = 0.9,
     threads: Optional[int] = None,
     registry: Optional[Path] = None,
+    gtf: Optional[Path] = None,
 ) -> Tuple[Optional[GenomeCall], Dict[str, Tuple[str, str]], List[str]]:
     """The registered genome whose annotation holds the input IDs, its gene table, and notes.
 
     Returns (None, {}, notes) when the machine has no registry, no registered
     genome shares the input's ID prefix, or none reaches ``min_fraction`` -- the
     caller then falls back to Ensembl's own annotation.
+
+    ``gtf`` (1.1, --gtf): the annotation the data were counted against, given for this run. It is then the only
+    candidate -- no registry is read -- and is indexed under the reference directory like a registered genome.
     """
     from .parallel import map_ordered, resolve_threads
 
     notes: List[str] = []
     from .sister import sister
 
-    if registry is None and not sister().usable:
-        notes.append(sister().summary())
-    genomes = all_registered_genomes(reference_dir, registry)
+    if gtf is not None:
+        path = Path(gtf).expanduser().resolve()
+        if gtf_first_gene_id(path) is None:
+            raise ProjectError(35, f"--gtf {gtf}: not a readable GTF with gene lines")
+        genomes = {gtf_genome_name(path): {"gtf": str(path), "_source": "--gtf"}}
+    else:
+        if registry is None and not sister().usable:
+            notes.append(sister().summary())
+        genomes = all_registered_genomes(reference_dir, registry)
     if not genomes:
         return None, {}, notes + ["no registered genomes found (no Paralome registry, nothing in the own registry)"]
     ids = set(gene_ids)
@@ -245,6 +384,16 @@ def identify_registered_genome(
     ranking = []
     tables: Dict[str, Dict[str, Tuple[str, str]]] = {}
     for name, genes, note in results:
+        if genes is None and note.startswith(UNWRITABLE):
+            # 1.1: say which case it is -- not in the group, or not
+            # group-writable -- and only when neither, the general text.
+            from .reference import unwritable_reason
+
+            reason = unwritable_reason(Path(reference_dir) / "registered_genomes" / _safe(name))
+            raise ProjectError(15, f"the index of registered genome {name} cannot be written to the shared "
+                                   f"reference ({note[len(UNWRITABLE) + 2:]}). "
+                                   + (reason or "The reference belongs to the group that shares it: make it "
+                                      "group-writable (chmod -R g+rwX, and g+s on its folders) for that group"))
         if genes is None:
             notes.append(note)
             continue

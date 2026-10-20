@@ -60,8 +60,10 @@ def _read_umask() -> int:
 
 
 #: mkstemp creates files readable by their owner only; JSON is written with the permissions an ordinary file
-#: would get, so a shared reference directory's manifests are readable by everyone using it.
-_FILE_MODE = 0o666 & ~_read_umask()
+#: would get, so a shared reference directory's manifests are readable by everyone using it. 1.1: read when the
+#: file is written, not once at import -- inside reference.shared_writes the umask is the group-writable one.
+def _file_mode() -> int:
+    return 0o666 & ~_read_umask()
 
 
 def write_json(path: PathLike, payload: Mapping[str, Any]) -> Path:
@@ -82,7 +84,7 @@ def write_json(path: PathLike, payload: Mapping[str, Any]) -> Path:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(dumps(stamped))
-        os.chmod(tmp, _FILE_MODE)
+        os.chmod(tmp, _file_mode())
         os.replace(tmp, target)
     except BaseException:
         if os.path.exists(tmp):

@@ -9,4 +9,4 @@ The version changes only when the way the program runs changes. Documentation,
 comments and metadata ride along with the next release.
 """
 
-__version__ = "1.0"
+__version__ = "1.1"

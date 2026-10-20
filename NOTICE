@@ -40,12 +40,6 @@ distributed with Evidome.
   It fits the database-value model, and brings NumPy (https://numpy.org) and
   SciPy (https://scipy.org), each under the BSD 3-Clause License.
 
-The evidence browser page (Evidome_Viewer_v<version>.html) loads DuckDB-WASM
-(https://github.com/duckdb/duckdb-wasm), under the MIT License, from the
-jsDelivr CDN (https://cdn.jsdelivr.net) when it is opened. DuckDB-WASM is not
-distributed with Evidome. The page reads the evidence files inside the browser
-and sends none of them anywhere.
-
 REFERENCE DATA
 ==============
 
@@ -77,9 +71,24 @@ this software. It comes from:
   OmniPath's curated signalling network (Tuerei D. et al., OmniPath).
 
 Any further knowledge source added later (pathway, regulator, miRNA, drug
-databases) is recorded here with its licence before it is used, because a
-licence that is free for academic use is not necessarily free for commercial
-use.
+databases) is recorded here, with its licence, before it is used.
 
 Evidome runs Paralome, when installed, as a separate program (to ask where
 its shared locations are). Paralome is not distributed with Evidome.
+
+THIRD-PARTY SOFTWARE AND DATA: THE USER'S RESPONSIBILITY
+========================================================
+
+Evidome runs software and downloads data that belong to others: programs the
+user installs (for example Paralome) and reference data fetched at run time
+(genome builds, annotation and variant databases, gene sets, regulator and
+other knowledge databases). None of them is distributed with this software,
+and each is governed by its own licence and terms of use.
+
+Whether a particular use of any of them is permitted, including whether a
+use counts as commercial under its terms, is for the user to determine and
+comply with. The author makes no representation that any such use is
+licensed, and accepts no liability for a user's use of third-party software
+or data, which is at the user's own risk. This is in addition to the
+disclaimer of warranty and limitation of liability in sections 15 and 16 of
+the GNU Affero General Public License.

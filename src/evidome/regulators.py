@@ -84,6 +84,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .errors import ProjectError
+from .reference import shared_writes
 
 OMNIPATH_BASE = "https://omnipathdb.org"
 NETWORKS = ("collectri", "signalling_via_tf")
@@ -290,8 +291,12 @@ def build_regulons(collectri_rows, omnipath_rows, symbols: Dict[str, str], ambig
     return rows, dict(counts)
 
 
-def fetch_regulators(reference_dir: Path, *, release: int = 116, refresh: bool = False,
+@shared_writes
+def fetch_regulators(reference_dir: Path, *, release=None, refresh: bool = False,
                      urls: Optional[Dict[str, str]] = None, threads: Optional[int] = None, log=print) -> Path:
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from datetime import datetime, timezone
 
     from .jsonio import write_json
@@ -337,8 +342,11 @@ def fetch_regulators(reference_dir: Path, *, release: int = 116, refresh: bool =
     return path
 
 
-def load_regulons(reference_dir: Path, release: int = 116, networks: Optional[Iterable[str]] = None):
+def load_regulons(reference_dir: Path, release=None, networks: Optional[Iterable[str]] = None):
     """{(network, regulator): {"kind", "gene", "targets": {gene: sign}}}; EVD-0025 if not indexed."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     path = regulators_dir(reference_dir, release) / "regulons.tsv"
     if not path.exists():
         raise ProjectError(25, f"no regulator index at {path.parent}")
@@ -451,10 +459,13 @@ def analyse_comparison(table, regulons, *, alpha: float, min_targets: int, max_t
     return rows
 
 
-def run_regulators(crosswalk_dir: Path, reference_dir: Path, *, out: Optional[Path] = None, release: int = 116,
+def run_regulators(crosswalk_dir: Path, reference_dir: Path, *, out: Optional[Path] = None, release=None,
                    alpha: float = 0.05, min_targets: int = DEFAULT_MIN_TARGETS,
                    max_targets: int = DEFAULT_MAX_TARGETS, networks: Optional[Sequence[str]] = None,
                    threads: Optional[int] = None, log=print) -> Path:
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from .enrich import _comparisons, _write, read_comparison
     from .jsonio import read_json, write_json
     from .parallel import map_ordered, resolve_threads

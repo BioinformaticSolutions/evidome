@@ -25,7 +25,7 @@ from .errors import ProjectError
 
 @dataclass(frozen=True)
 class SlurmOptions:
-    cpus_per_task: int = 40
+    cpus_per_task: int = 16   # under a whole node, so a task starts beside other work
     mem: str = "4G"   # the largest comparison measured peaked at 0.73 GB
     partition: Optional[str] = None
     account: Optional[str] = None

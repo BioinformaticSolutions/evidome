@@ -650,10 +650,13 @@ def draw_curves(curves, shap, fits, folder: Path, figure_settings=None) -> int:
     return drawn
 
 
-def database_value(crosswalk_dir: Path, reference_dir: Path, *, release: int = 116, out: Optional[Path] = None,
+def database_value(crosswalk_dir: Path, reference_dir: Path, *, release=None, out: Optional[Path] = None,
                    settings: Optional[ValueSettings] = None, sources=None, networks=None,
                    threads: Optional[int] = None, figure_settings=None, log=print) -> List[str]:
     """Every comparison here, one after another (each uses every CPU), then finalize."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from .enrich import _comparisons
     from .parallel import resolve_threads
 
@@ -671,10 +674,13 @@ def database_value(crosswalk_dir: Path, reference_dir: Path, *, release: int = 1
 PLAN = "plan.json"
 
 
-def plan_slurm(crosswalk_dir: Path, reference_dir: Path, *, options, release: int = 116, out: Optional[Path] = None,
+def plan_slurm(crosswalk_dir: Path, reference_dir: Path, *, options, release=None, out: Optional[Path] = None,
                settings: Optional[ValueSettings] = None, sources=None, networks=None, figure_settings=None,
                submit=None, log=print) -> Dict[str, str]:
     """One array task per comparison, then a finalize job after them."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     import shlex
     import sys
 

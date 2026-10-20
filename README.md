@@ -17,7 +17,7 @@ nothing about Evidome depends on Paralome.
 ## Install
 
 ```
-python3 -m pip install .            # from a copy of this repository
+python3 -m pip install evidome
 ```
 
 Requires Python 3.9 or later. pip installs the two required packages,
@@ -25,17 +25,50 @@ matplotlib and scikit-learn (see `NOTICE`).
 
 ## Reference data
 
-Fetched once per machine, which needs internet access for this step:
+Name the directory the reference data and indexes live in, or should be built
+in, with `--reference-dir DIR`. It is remembered for your later runs, so it is
+given once. (With Paralome set up on the machine, they live beside Paralome's
+genomes and nothing needs giving.)
+
+Fetched once, which needs internet access for this step:
 
 ```
+evidome reference fetch --species <name> --reference-dir DIR   # first; then once per species
 evidome reference genesets
 evidome reference regulators
 evidome reference pathway-signs
-evidome reference fetch --species <name>      # per species
 ```
 
-The first three are shared by every species. A run on a species that has not
-been fetched fetches it by itself.
+`fetch` comes first: the gene sets and regulators are indexed to the human
+genes it downloads, and the pathway signs are built from the gene sets. Gene
+sets, regulators and pathway signs are shared by every species. A run on a
+species that has not been fetched fetches it by itself.
+
+On a shared machine the reference directory belongs to a group: it is created
+group-writable, and its group is passed on to everything made in it. A run can
+write there -- a species not yet fetched, or the first index of a registered
+genome -- so every account that runs Evidome must be in that group.
+
+To identify your data by the exact annotation they were counted against
+(rather than by Ensembl's own), give that annotation with the run:
+
+```
+evidome TABLE --out DIR --gtf <annotation.gtf>
+```
+
+Its orthologs then come from the Ensembl release the annotation belongs to,
+read from the name Ensembl gave the GTF (`Species.Assembly.<release>.gtf`), or
+from the dataset of Ensembl's new platform (`genes.gtf.gz`). Or register it
+once, for every run:
+
+```
+evidome reference genome add <name> --gtf <annotation.gtf>
+evidome reference genome list
+evidome reference genome remove <name>    # only the account that added it
+```
+
+On a machine with Paralome, the genomes registered in Paralome are used as
+they are.
 
 ## Use
 
@@ -71,15 +104,13 @@ which is also installed with the package.
 
 ## Output
 
-The evidence zip (`<out>_combined_results.zip`) holds every table as CSV, a
-manifest that describes each file and column, and
-`Evidome_Viewer_v<version>.html`, a page for browsing the results. Beside the
-zip, `<out>_workbook.xlsx` shows the same tables as one workbook. Open the
-page in a web browser (unzipped beside the files, or on its own) and choose
-the zip or the unzipped folder. It lists the findings, ORA, GSEA, regulators
-and genes of each comparison, with a pop-up per gene set, regulator and gene
-that exports as TSV. The page reads the files on your computer and uploads
-nothing.
+The evidence zip (`<out>_evidome_output.zip`) holds every table as CSV and a
+manifest that describes each file and column. No Excel workbook is
+written. To browse the results, open the zip (or the unzipped folder) in the Evidence Browser of
+[OmicView](https://github.com/BioinformaticSolutions/omicview), hosted or
+downloaded. It lists the findings, ORA, GSEA, regulators and genes of each
+comparison, with a pop-up per gene set, regulator and gene that exports as TSV.
+It reads the files on your computer and uploads nothing.
 
 ## Develop
 

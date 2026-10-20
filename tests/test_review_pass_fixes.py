@@ -10,7 +10,6 @@ from evidome.enrich import Settings, enrich, enrichment_score, null_es
 from evidome.errors import ProjectError
 from evidome.reference import index_gtf
 from evidome.wide_stats import DIRECTION_ROLE, read_wide_statistics
-from evidome.xlsx import _number
 from test_enrichment_is_exact_and_reproducible import _world
 
 
@@ -109,12 +108,6 @@ def test_every_adaptive_round_draws_new_permutations(tmp_path, monkeypatch):
     enrich(cw, ref, settings=Settings(permutations=100, max_permutations=100000, min_exceedances=10_000_000),
            threads=1, log=lambda *_: None)
     assert len(tags) == len(set(tags))
-
-
-# --- the workbook ------------------------------------------------------------------------------------------------
-
-def test_an_underscored_value_is_written_as_text_not_a_number():
-    assert _number("1_2") is None and _number("12") == "12"
 
 
 # --- pass 2 -------------------------------------------------------------------------------------------------------

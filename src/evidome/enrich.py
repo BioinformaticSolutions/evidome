@@ -916,10 +916,13 @@ def _gene_sets(reference_dir: Path, release: int, sources, log):
     return info, members, used
 
 
-def enrich(crosswalk_dir: Path, reference_dir: Path, *, out: Optional[Path] = None, release: int = 116,
+def enrich(crosswalk_dir: Path, reference_dir: Path, *, out: Optional[Path] = None, release=None,
            settings: Optional[Settings] = None, sources: Optional[Sequence[str]] = None,
            threads: Optional[int] = None, log=print) -> Path:
     """ORA and preranked GSEA for every comparison, on this machine. Returns the manifest path."""
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     from .parallel import resolve_threads
 
     settings = settings or Settings()
@@ -941,13 +944,16 @@ PLAN_NAME = "plan.json"
 
 
 def plan_slurm(crosswalk_dir: Path, reference_dir: Path, *, options, out: Optional[Path] = None,
-               release: int = 116, settings: Optional[Settings] = None, sources: Optional[Sequence[str]] = None,
+               release=None, settings: Optional[Settings] = None, sources: Optional[Sequence[str]] = None,
                submit=None, extra: Optional[Dict[str, object]] = None, log=print) -> Dict[str, str]:
     """Write the plan and two sbatch scripts, submit an array (one task per comparison) and a finalize job.
 
     Returns {"array": job id, "finalize": job id, "plan": path}. Nothing is
     computed here: the login node only checks the inputs exist.
     """
+    from .releases import human_release
+
+    release = human_release(reference_dir, release)
     import dataclasses
     import shlex
     import sys

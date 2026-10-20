@@ -82,8 +82,10 @@ Every table has one gene ID column, holding one of three kinds of ID:
 | NCBI GeneID ("Entrez ID") | `7157` | found from the IDs |
 | Gene symbol | `TP53`, `Gapdh` | **must be named with `--species`** |
 
-- **Column name:** one of `Gene`, `gene_id`, `Ensembl_ID` or
-  `ensembl_gene_id`, whatever kind of ID it holds. Any other name is given
+- **Column name:** one of `Gene`, `gene_id`, `Ensembl_ID`,
+  `ensembl_gene_id`, `GeneID` (GEO2R), `ENTREZID` or `EntrezID` (limma and
+  edgeR tables annotated from `org.*.eg.db`), whatever kind of ID it holds;
+  the first of these the table has is the one read. Any other name is given
   with `--id-column NAME`. In a per-comparison or tool table, R's unnamed
   row-name column is also taken as the ID column (section 7).
 - **Which kind:** read from the column itself. If 90% or more of the IDs are
@@ -141,7 +143,7 @@ anything else happens; the rest of the run is the same as for Ensembl IDs.
 ### Symbols beside the IDs
 
 A separate symbol column is optional: one of `Common_name`, `gene_name`,
-`Symbol` or `symbol`. A symbol equal to the gene ID means "no symbol". When
+`Symbol`, `symbol` or `SYMBOL`. A symbol equal to the gene ID means "no symbol". When
 the IDs are symbols, they are the genes' symbols too. Symbols are carried to
 the outputs and, for genes no ortholog source maps, used for an exact match to
 a human gene that is the only one with that symbol (turned off with
@@ -384,9 +386,13 @@ Two name patterns are recognised (as Paralome writes them):
   where given, else its `T-statistic`. With two levels this F-test and that
   contrast are the same test, so by default the F-test is not analysed and the
   contrast stands in for it (`--keep-duplicate-ftests` analyses both).
-- **Interaction** `<A>_x_<B>`: Effect of the A contrast within B's alternative
-  level minus Effect within B's reference level (contrasts named
-  `<A stem>_within_<level>_contrast`, each with an `Effect` column).
+- **Interaction** `<A>_x_<B>` (two factors): Effect of the A contrast within
+  B's alternative level minus Effect within B's reference level (contrasts
+  named `<A stem>_within_<level>_contrast`, each with an `Effect` column; the
+  level may also be written `<B>_<level>` or `<B><level>`). In a design of more
+  than two factors these are the contrasts within B's levels alone, averaged
+  over the other factors, and are found by name. An interaction of three or
+  more factors has no single direction and is analysed without one.
 
 An F-test whose name matches neither pattern, or whose contrasts are not in
 the table, is analysed without a direction.

@@ -20,8 +20,8 @@ abstract: >-
   preranked GSEA) and upstream-regulator evidence (CollecTRI and OmniPath),
   with every gene -- given as an Ensembl ID, an NCBI GeneID or a symbol --
   mapped to its human ortholog through Ensembl Compara. The
-  report is written for an AI agent to read and interpret, with a browser
-  page and a workbook for people.
+  report is written for an AI agent to read and interpret; for people, the
+  Evidence Browser of OmicView opens it.
 keywords:
   - pathway analysis
   - gene set enrichment

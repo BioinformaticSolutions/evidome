@@ -6,7 +6,7 @@ Locally, one after another on this machine. With ``--backend slurm``, the
 crosswalk runs here (about a minute), then three jobs are chained with
 ``afterok`` dependencies: the enrichment array (one task per comparison), its
 finalize job, and a ``run-finish`` job that runs regulators and report. The
-command returns with the job IDs; the evidence bundle and workbook appear
+command returns with the job IDs; the evidence bundle appears
 when the last job ends. Every step is the same code the individual commands
 run, with the same options, so a chained run and a step-by-step run write the
 same files.
@@ -44,7 +44,7 @@ def run_local(crosswalk_dir: Path, reference_dir: Path, *, release: int, setting
     lines += regulator_lines(run_regulators(crosswalk_dir, reference_dir, release=release, alpha=settings.alpha,
                                             threads=threads, log=log, **regulator_options))
     paths = build_report(crosswalk_dir, log=log)
-    lines += [f"wrote {paths[k]}" for k in ("evidence", "archive", "workbook")]
+    lines += [f"wrote {paths[k]}" for k in ("evidence", "archive")]
     return lines + _figures(crosswalk_dir, figure_settings, threads, log)
 
 
@@ -87,7 +87,7 @@ def run_finish(plan_path: Path, *, threads: Optional[int] = None, log=print) -> 
     lines = regulator_lines(run_regulators(crosswalk_dir, reference_dir, release=plan["release"], alpha=settings.alpha,
                                            threads=threads, log=log, **(plan.get("regulators") or {})))
     paths = build_report(crosswalk_dir, log=log)
-    lines += [f"wrote {paths[k]}" for k in ("evidence", "archive", "workbook")]
+    lines += [f"wrote {paths[k]}" for k in ("evidence", "archive")]
     from .figures import FigureSettings
 
     figures = plan.get("figures", {})

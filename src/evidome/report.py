@@ -1,4 +1,4 @@
-"""The evidence bundle for an interpreting agent, and a workbook for people.
+"""The evidence bundle for an interpreting agent.
 
 ``report <crosswalk dir>`` gathers what ``crosswalk`` and ``enrich`` wrote into
 one self-describing folder, ``<crosswalk dir>/evidence/``:
@@ -14,13 +14,17 @@ one self-describing folder, ``<crosswalk dir>/evidence/``:
     ortholog_crosswalk.csv      every input gene -> human, with evidence
     collision_ballots.csv       every many-to-one vote, one row per candidate
     gene_sets.csv               id, source, name, category, size of each set used
+    gene_set_members.csv        the members of each set tested, among the human genes this run reached
+    regulator_targets.csv       the signed targets of each regulator tested, among the same genes
 
-plus ``<crosswalk dir name>_combined_results.zip`` (the same folder, compressed, unzipping to a
-folder of that name, with ``<Name>_Viewer_v<version>.html`` beside the files: a page for people that
-opens the zip it came in and browses it, named and stamped with the program version that wrote it)
-and a tabbed workbook
-``<crosswalk dir name>_workbook.xlsx``. The CSVs are the record; the workbook
-is a view of them, and says on its README sheet what it leaves out.
+plus ``<crosswalk dir name>_<program name>_output.zip`` (``results_stem``; the zip is named for what is inside it,
+the program's output) (the same folder, compressed, unzipping to a
+folder of that name; OmicView's Evidence Browser opens it, a page for people that browses it).
+The program's name is in it, so the file says what wrote it. The CSVs are the record.
+
+No workbook. OmicView's Evidence Browser opens the evidence zip and is the
+view for people; ``<crosswalk dir name>_<program name>_workbook.xlsx`` is no longer
+written, and one left by an earlier run is removed.
 
 The program states what each number is and how it was made -- never what it
 means biologically. The reading guide is written in that spirit:
@@ -32,13 +36,15 @@ from __future__ import annotations
 import csv
 import json
 import shutil
-import sys
 import zipfile
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from .errors import ProjectError
-from .xlsx import FIXED_ZIP_TIME
+
+#: Every member of the zip carries this time, so the same results make the same bytes (here, from the
+#: retired xlsx module).
+FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 CONTRAST_STATS = ("Raw_FPKM_Control_mean", "Raw_FPKM_Treatment_mean", "Control_mean", "Treatment_mean",
                   "Fold_change", "Log2_fold_change", "Effect", "T-statistic", "P-value", "Q-value",
@@ -49,7 +55,7 @@ OPTIONAL_STATS = ("Control_mean", "Treatment_mean", "Raw_FPKM_Control_mean", "Ra
 FTEST_STATS = ("F", "ANOVA_p", "ANOVA_q", "Direction_estimate")
 
 # ---------------------------------------------------------------------------
-# one description per column, used by the manifest AND the workbook
+# one description per column, used by the manifest
 # ---------------------------------------------------------------------------
 
 COLUMN_TEXT: Dict[str, str] = {
@@ -250,6 +256,10 @@ COLUMN_TEXT: Dict[str, str] = {
     "regulator_p": "Raw p of the regulator's own gene, if tested.",
     "consistent_targets": "Symbols of the consistent significant targets, ';'-separated.",
     "inconsistent_targets": "Symbols of the inconsistent significant targets, ';'-separated.",
+    # the members behind each set and regulator
+    "target_human_gene_id": "Human Ensembl gene ID of one of the regulator's targets (release in manifest "
+                            "provenance).",
+    "sign": "Direction of the regulator's effect on that target: 1 activation, -1 repression, 0 unknown.",
 }
 
 FILES: Dict[str, str] = {
@@ -269,6 +279,11 @@ FILES: Dict[str, str] = {
                               "included with their status.",
     "collision_ballots.csv": "Every many-to-one collision per comparison, one row per candidate.",
     "gene_sets.csv": "Every gene set of the sources used: identifier, name, category, size.",
+    "gene_set_members.csv": "The members of every gene set that has a row in enrichment_ora.csv or "
+                            "enrichment_gsea.csv, one row per (set, human gene), kept only for human genes this run "
+                            "reached (human_gene_statistics.csv); gene_sets.csv n_genes is each set's full size.",
+    "regulator_targets.csv": "The signed targets of every regulator that has a row in regulators.csv, one row per "
+                             "(network, regulator, human gene), kept only for human genes this run reached.",
 }
 
 GLOSSARY: Dict[str, str] = {
@@ -356,7 +371,7 @@ class Sources:
     """Locations of everything the report reads, with clear errors for what is missing."""
 
     def __init__(self, crosswalk_dir: Path):
-        # Resolved: the bundle is named after this folder, and `report .` would otherwise name it '_combined_results'.
+        # Resolved: the bundle is named after this folder, and `report .` would otherwise name it with an empty folder name.
         self.dir = Path(crosswalk_dir).resolve()
         self.summary_path = self.dir / "comparison_summary.json"
         self.crosswalk_csv = self.dir / "ortholog_crosswalk.csv"
@@ -534,39 +549,32 @@ def _write_csv(path: Path, columns: Sequence[str], rows: Iterable[Dict[str, obje
     return n
 
 
-#: The evidence browser, a single web page shipped in the package and copied into every
-#: evidence zip. Opened in a web browser, it is pointed at the zip it came in and reads it in place, on the
-#: user's computer: tables, filters, and a pop-up per gene set, regulator and gene, each exporting as TSV.
-#: In the zip it is named for the program and the version that wrote it: <Name>_Viewer_v<version>.html.
-VIEWER = "evidence_browser.html"
+#: The evidence zip is browsed in OmicView's Evidence Browser, a separate product; no page travels in the zip.
+#: The manifest names it so an agent reading the bundle knows what a person would open it with.
+OPEN_WITH = {
+    "program": "OmicView's Evidence Browser",
+    "where": "https://github.com/BioinformaticSolutions/omicview",
+    "description": ("A web page for people, not evidence: open it in a web browser and choose this zip; it reads "
+                    "the CSV files on the user's computer (nothing is uploaded) and lists them with filters, and a "
+                    "pop-up per gene set, regulator and gene. It adds nothing the CSV files do not hold."),
+}
 
 
-def viewer_name() -> str:
-    from .identity import DISPLAY_NAME
-    from .version import __version__
+def results_stem(folder: str) -> str:
+    """The evidence zip's name, less ``.zip``, and the folder inside it: it names the program, so the file says what wrote it."""
+    from .identity import NAME
 
-    return f"{DISPLAY_NAME}_Viewer_v{__version__}.html"
-VIEWER_TEXT = ("A web page for people, not evidence: open it in a web browser and choose this zip; it reads the "
-               "CSV files on the user's computer (nothing is uploaded) and lists them with filters, and a pop-up "
-               "per gene set, regulator and gene. It adds nothing the CSV files do not hold.")
+    return f"{folder}_{NAME}_output"
 
 
-def viewer_page() -> bytes:
-    """The page's bytes, from the installed package, stamped with the program and version writing it."""
-    from importlib.resources import files
+def former_workbook_name(folder: str) -> str:
+    """The workbook an earlier run wrote beside the zip; removed when the report is written again."""
+    from .identity import NAME
 
-    from .identity import DISPLAY_NAME
-    from .version import __version__
-
-    page = (files(__package__) / "web" / VIEWER).read_bytes()
-    blank = b'<meta name="written-by" content="">'
-    if page.count(blank) != 1:
-        raise ProjectError(24, f"the packaged {VIEWER} has no written-by stamp to fill")
-    return page.replace(blank, f'<meta name="written-by" content="{DISPLAY_NAME} {__version__}">'.encode())
+    return f"{folder}_{NAME}_workbook.xlsx"
 
 
-def build_report(crosswalk_dir: Path, *, out: Optional[Path] = None, workbook: Optional[Path] = None,
-                 log=print) -> Dict[str, Path]:
+def build_report(crosswalk_dir: Path, *, out: Optional[Path] = None, log=print) -> Dict[str, Path]:
     from .crosswalk import CROSSWALK_COLUMNS
     from .human_tables import BALLOT_COLUMNS, HUMAN_TABLE_IDENTITY
     from .identity import DISPLAY_NAME, NAME
@@ -584,16 +592,33 @@ def build_report(crosswalk_dir: Path, *, out: Optional[Path] = None, workbook: O
         counts[name] = _write_csv(out / name, columns, rows)
         log(f"  {name:<28} {counts[name]:>9} rows")
 
+    # what the tables name -- sets, regulators, human genes reached -- noted as they are written, for the
+    # members files that follow
+    sets_tested, regulators_tested, reached = set(), set(), set()
+
+    def noting(table: Tuple[List[str], Iterable[Dict[str, object]]], note) -> Tuple[List[str], Iterator[Dict[str, object]]]:
+        columns, rows = table
+
+        def watched():
+            for r in rows:
+                note(r)
+                yield r
+        return columns, watched()
+
     emit("comparisons.csv", *comparisons_rows(src))
     emit("findings.csv", FINDINGS_COLUMNS, findings_rows(src))
-    emit("enrichment_ora.csv", *_enrichment(src, "ora"))
-    emit("enrichment_gsea.csv", *_enrichment(src, "gsea"))
-    emit("regulators.csv", *_regulator_rows(src))
-    emit("human_gene_statistics.csv", *_long(src, "comparisons", ".human_genes.csv", HUMAN_TABLE_IDENTITY))
+    emit("enrichment_ora.csv", *noting(_enrichment(src, "ora"), lambda r: sets_tested.add(r["set_id"])))
+    emit("enrichment_gsea.csv", *noting(_enrichment(src, "gsea"), lambda r: sets_tested.add(r["set_id"])))
+    emit("regulators.csv", *noting(_regulator_rows(src), lambda r: regulators_tested.add((r["network"], r["regulator"]))))
+    emit("human_gene_statistics.csv", *noting(_long(src, "comparisons", ".human_genes.csv", HUMAN_TABLE_IDENTITY),
+                                              lambda r: reached.add(r["human_gene_id"])))
     emit("ortholog_crosswalk.csv", CROSSWALK_COLUMNS, _rows(src.crosswalk_csv))
     emit("collision_ballots.csv", *_long(src, "collisions", ".ballots.csv", BALLOT_COLUMNS))
     gene_set_columns = ["set_id", "source", "name", "category", "n_genes", "source_ids"]
     emit("gene_sets.csv", gene_set_columns, _gene_set_rows(src))
+    emit("gene_set_members.csv", ["set_id", "human_gene_id"], _member_rows(src, sets_tested, reached))
+    emit("regulator_targets.csv", ["network", "regulator", "target_human_gene_id", "sign"],
+         _target_rows(src, regulators_tested, reached))
 
     undescribed = sorted({c for cols in columns_of.values() for c in cols} - set(COLUMN_TEXT))
     if undescribed:  # a column an agent would have to guess: refuse, as the input reader does
@@ -630,8 +655,8 @@ def build_report(crosswalk_dir: Path, *, out: Optional[Path] = None, workbook: O
         "glossary": GLOSSARY,
         "reading_guide": READING_GUIDE,
     }
-    # The page in the zip, named here so an agent reading the manifest knows what it is.
-    manifest["viewer"] = {"path": viewer_name(), "description": VIEWER_TEXT}
+    # What a person opens the zip with, named so an agent reading the manifest knows it is not evidence.
+    manifest["open_with"] = dict(OPEN_WITH)
     notes = []
     if src.enrichment is None:
         notes.append("no enrichment in this crosswalk folder: run 'enrich' first for ORA/GSEA tables")
@@ -646,7 +671,7 @@ def build_report(crosswalk_dir: Path, *, out: Optional[Path] = None, workbook: O
 
     # Named after the crosswalk folder, and so is the folder inside it: two studies' bundles
     # can sit, and be unzipped, side by side.
-    stem = f"{src.dir.name}_combined_results"
+    stem = results_stem(src.dir.name)
     archive = src.dir / f"{stem}.zip"
     tmp = archive.with_name(archive.name + ".tmp")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
@@ -656,16 +681,15 @@ def build_report(crosswalk_dir: Path, *, out: Optional[Path] = None, workbook: O
             info.compress_type, info.external_attr = zipfile.ZIP_DEFLATED, 0o644 << 16
             with (out / name).open("rb") as src_file, zf.open(info, "w", force_zip64=True) as dest:
                 shutil.copyfileobj(src_file, dest, 1 << 20)
-        info = zipfile.ZipInfo(f"{stem}/{viewer_name()}", date_time=FIXED_ZIP_TIME)
-        info.compress_type, info.external_attr = zipfile.ZIP_DEFLATED, 0o644 << 16
-        zf.writestr(info, viewer_page())
     tmp.replace(archive)
     log(f"  {archive.name:<28} {archive.stat().st_size / 1e6:>8.1f} MB")
 
-    book = Path(workbook) if workbook else src.dir / f"{src.dir.name}_workbook.xlsx"
-    _workbook(book, out, manifest, columns_of)
-    log(f"  {book.name:<28} {book.stat().st_size / 1e6:>8.1f} MB")
-    return {"evidence": out, "manifest": manifest_path, "archive": archive, "workbook": book}
+    # no workbook; one an earlier run left beside the zip would describe results that are no longer these
+    former = src.dir / former_workbook_name(src.dir.name)
+    if former.is_file():
+        former.unlink()
+        log(f"  {former.name:<28} removed (no workbook any more)")
+    return {"evidence": out, "manifest": manifest_path, "archive": archive}
 
 
 def _regulator_rows(src: Sources) -> Tuple[List[str], Iterator[Dict[str, str]]]:
@@ -679,6 +703,47 @@ def _regulator_rows(src: Sources) -> Tuple[List[str], Iterator[Dict[str, str]]]:
             if path.exists():
                 yield from _rows(path)
     return list(REGULATOR_COLUMNS), rows()
+
+
+def _reference(src: Sources) -> Optional[Tuple[Path, int]]:
+    """The reference folder and Ensembl release enrichment (else the regulator step) recorded, if recorded."""
+    for meta in (src.enrichment, src.regulators):
+        if meta and meta.get("reference_dir") and meta.get("ensembl_release") is not None:
+            return Path(meta["reference_dir"]), int(meta["ensembl_release"])
+    return None
+
+
+def _member_rows(src: Sources, sets_tested, reached) -> Iterator[Dict[str, str]]:
+    """Each set tested, its members among the human genes reached, in the index's order."""
+    ref = _reference(src)
+    if src.enrichment is None or ref is None or not sets_tested:
+        return
+    from .genesets import genesets_dir
+
+    path = genesets_dir(*ref) / "members.tsv"
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            if row["set_id"] in sets_tested and row["human_gene_id"] in reached:
+                yield {"set_id": row["set_id"], "human_gene_id": row["human_gene_id"]}
+
+
+def _target_rows(src: Sources, regulators_tested, reached) -> Iterator[Dict[str, str]]:
+    """Each regulator tested, its signed targets among the human genes reached, in the index's order."""
+    ref = _reference(src)
+    if src.regulators is None or ref is None or not regulators_tested:
+        return
+    from .regulators import regulators_dir
+
+    path = regulators_dir(*ref) / "regulons.tsv"
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            if (row["network"], row["regulator"]) in regulators_tested and row["target_human_gene_id"] in reached:
+                yield {"network": row["network"], "regulator": row["regulator"],
+                       "target_human_gene_id": row["target_human_gene_id"], "sign": row["sign"]}
 
 
 def _gene_set_rows(src: Sources) -> Iterator[Dict[str, str]]:
@@ -697,83 +762,3 @@ def _gene_set_rows(src: Sources) -> Iterator[Dict[str, str]]:
         for row in csv.DictReader(handle, delimiter="\t"):
             if row["source"] in used:
                 yield row
-
-
-# ---------------------------------------------------------------------------
-# the workbook: a view for people
-# ---------------------------------------------------------------------------
-
-WORKBOOK_P_MAX = 0.05
-TEXT_COLUMNS = ("via_tfs", "driving_tfs", "regulator", "network", "consistent_targets", "inconsistent_targets", "comparison", "set_id", "name", "category", "human_gene_id", "human_symbol", "input_gene_id",
-                "input_symbol", "source_gene_id", "source_symbol", "candidate_gene_id", "candidate_symbol",
-                "candidates", "overlap_genes", "leading_edge_genes", "genes", "control", "treatment")
-
-
-def _workbook(path: Path, evidence: Path, manifest: Dict[str, object], columns_of: Dict[str, List[str]]) -> Path:
-    from .xlsx import Sheet, write_workbook
-
-    def sheet(title: str, name: str, keep=None) -> Sheet:
-        columns = columns_of[name]
-
-        def rows():
-            for r in _rows(evidence / name):
-                if keep is None or keep(r):
-                    yield [r.get(c, "") for c in columns]
-        return Sheet(title, columns, rows(), text_columns=TEXT_COLUMNS)
-
-    def p_ok(r):
-        try:
-            return float(r["p"]) < WORKBOOK_P_MAX
-        except (KeyError, ValueError):
-            return False
-
-    def reg_ok(r):
-        values = [r.get("overlap_p", ""), r.get("activity_p", "")]
-        return any(v not in ("", None) and float(v) < WORKBOOK_P_MAX for v in values)
-
-    readme = [[f"{manifest['about']}"], [""],
-              ["This workbook is a view of the evidence folder beside it (the CSV files are the record)."],
-              [f"The ORA, GSEA and Regulators sheets show only results with p < {WORKBOOK_P_MAX} (Regulators: "
-               "overlap or activity); every result is in evidence/enrichment_ora.csv, enrichment_gsea.csv and "
-               "regulators.csv."], [""],
-              ["Provenance"]]
-    for key, value in (manifest["provenance"] or {}).items():  # type: ignore[union-attr]
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value, sort_keys=True)[:2000]
-        readme.append([f"{key}: {value}"])
-    readme += [[""], ["Reading guide"]] + [[f"- {line}"] for line in manifest["reading_guide"]]  # type: ignore
-    readme += [[""], ["Glossary"]] + [[f"{k}: {v}"] for k, v in manifest["glossary"].items()]  # type: ignore
-    readme += [[""], ["Columns"]]
-    for f in manifest["files"]:  # type: ignore[union-attr]
-        readme.append([f"{f['path']} -- {f['description']}"])
-        readme += [[f"    {c['name']}: {c['description']}"] for c in f["columns"]]
-    # Excel holds 1,048,575 data rows per sheet. The README is written first, so a sheet that may be cut is named
-    # here from the row counts already known, so the cut is counted and reported.
-    from .xlsx import MAX_ROWS
-
-    # Only sheets that hold every row of their CSV can be judged from its count; the p < 0.05 sheets are judged
-    # after writing (the stderr report below), since their CSVs' counts overstate them.
-    unfiltered = {"comparisons.csv", "findings.csv", "human_gene_statistics.csv", "ortholog_crosswalk.csv",
-                  "collision_ballots.csv"}
-    too_long = [(f["path"], f["rows"]) for f in manifest["files"]  # type: ignore
-                if f["path"] in unfiltered and int(f["rows"]) > MAX_ROWS]
-    if too_long:
-        readme[2:2] = [[f"NOTE: {name} has {rows:,} rows; its sheet holds at most the first {MAX_ROWS:,}. "
-                        f"The full table is evidence/{name}."] for name, rows in too_long]
-    sheets = [
-        Sheet("README", ["README"], readme, header=False, widths=[160], wrap=True),
-        sheet("Comparisons", "comparisons.csv"),
-        sheet("Findings q<0.05", "findings.csv"),
-        sheet("ORA p<0.05", "enrichment_ora.csv", p_ok),
-        sheet("GSEA p<0.05", "enrichment_gsea.csv", p_ok),
-        sheet("Regulators p<0.05", "regulators.csv", reg_ok),
-        sheet("Human genes", "human_gene_statistics.csv"),
-        sheet("Crosswalk", "ortholog_crosswalk.csv"),
-        sheet("Collisions", "collision_ballots.csv"),
-    ]
-    written = write_workbook(path, sheets)
-    for s in sheets:
-        if s.cut:
-            print(f"  workbook sheet {s.name!r}: {s.cut:,} rows beyond Excel's limit left out "
-                  f"(all of them are in the evidence CSV)", file=sys.stderr)
-    return written
